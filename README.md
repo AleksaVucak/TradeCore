@@ -1,0 +1,42 @@
+# TradeCore
+
+A full-stack strategy research and paper-trading platform for crypto spot markets (BTC, ETH). Features historical data ingestion, backtesting, paper trading, and ML-based market regime detection.
+
+## Quick start
+
+1. Copy environment file and start services:
+
+   ```bash
+   cp .env.example .env
+   docker compose up --build
+   ```
+
+2. Open the app and API:
+
+   - **Frontend:** http://localhost:3000  
+   - **Backend API:** http://localhost:8000  
+   - **API docs:** http://localhost:8000/docs  
+
+3. Stop: `Ctrl+C` then `docker compose down`.
+
+## Stack
+
+- **Frontend:** Next.js (App Router), TypeScript, Tailwind CSS, shadcn/ui  
+- **Backend:** FastAPI, SQLAlchemy, Pydantic  
+- **Worker:** Celery  
+- **Data:** PostgreSQL, Redis  
+
+## Project structure
+
+```
+tradecore/
+  frontend/     # Next.js app
+  backend/      # FastAPI app + Celery tasks
+  docker-compose.yml
+  README.md
+```
+
+## Development
+
+- Backend and frontend use volume mounts for hot reload in dev.  
+- Run tests: from `backend/`, run `pytest`.

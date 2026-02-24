@@ -1,0 +1,16 @@
+# Database
+DATABASE_URL=postgresql://tradecore:tradecore@postgres:5432/tradecore
+
+# Redis (broker + cache)
+REDIS_URL=redis://redis:6379/0
+CELERY_BROKER_URL=redis://redis:6379/1
+
+# Auth
+SECRET_KEY=change-me-in-production-use-openssl-rand-hex-32
+
+# App
+LOG_LEVEL=INFO
+CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+
+# Frontend (for API client)
+NEXT_PUBLIC_API_URL=http://localhost:8000
