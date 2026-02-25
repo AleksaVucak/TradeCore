@@ -40,3 +40,20 @@ tradecore/
 
 - Backend and frontend use volume mounts for hot reload in dev.  
 - Run tests: from `backend/`, run `pytest`.
+
+### Migrations
+
+Run Alembic **inside the backend container** (recommended; all deps including `psycopg2` are installed):
+
+```bash
+docker compose exec backend alembic upgrade head
+```
+
+To run migrations **on your host** instead, install backend deps and point at Postgres:
+
+```bash
+cd backend
+pip install -r requirements.txt
+export DATABASE_URL=postgresql://tradecore:tradecore@localhost:5432/tradecore  # if Postgres is in Docker
+alembic upgrade head
+```
