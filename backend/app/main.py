@@ -5,6 +5,7 @@ from sqlalchemy import text
 
 import redis
 
+from app.api.v1 import api_router
 from app.config import settings
 from app.db.session import SessionLocal
 
@@ -14,13 +15,20 @@ app = FastAPI(
     version="0.1.0",
 )
 
+# Allow localhost / 127.0.0.1 on any port for local dev (avoids CORS "Failed to fetch")
+_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins.split(","),
+    allow_origins=_origins,
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
+
+
+app.include_router(api_router)
 
 
 @app.get("/health")
