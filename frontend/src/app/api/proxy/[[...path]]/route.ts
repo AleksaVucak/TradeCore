@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:8000";
+const BACKEND_TIMEOUT_MS = 12_000;
 
 export async function GET(
   request: NextRequest,
@@ -54,7 +55,27 @@ async function proxy(
     body = await request.text();
   }
 
-  const res = await fetch(url, { method, headers, body });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), BACKEND_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(url, { method, headers, body, signal: controller.signal });
+  } catch (err) {
+    clearTimeout(timeoutId);
+    const message =
+      err instanceof Error && err.name === "AbortError"
+        ? "Backend did not respond in time."
+        : err instanceof Error
+          ? err.message
+          : "Could not reach backend.";
+    return NextResponse.json(
+      {
+        detail: `${message} Ensure the backend is running (e.g. \`docker compose up -d backend\` or \`uvicorn app.main:app --port 8000\`).`,
+      },
+      { status: 502 }
+    );
+  }
+  clearTimeout(timeoutId);
   const data = await res.text();
   const responseHeaders = new Headers();
   const contentType = res.headers.get("content-type");

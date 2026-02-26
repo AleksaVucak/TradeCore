@@ -41,6 +41,14 @@ tradecore/
 - Backend and frontend use volume mounts for hot reload in dev.  
 - Run tests: from `backend/`, run `pytest`.
 
+### Market data ingestion
+
+"Load last 30 days" on the Market data page enqueues Celery tasks; the **worker** does the actual fetch and DB write. If you see "Ingestion started" but "Check candle counts" stays at 0:
+
+1. **Ensure the worker is running:** `docker compose ps` — you should see `worker` as running. If not, start it: `docker compose up -d worker` (or `docker compose up -d` to start all services).
+2. **Check worker logs:** `docker compose logs -f worker` — look for "Ingest completed" or an error (e.g. missing `httpx`, Binance timeout, DB connection). Fix any error, then trigger "Load last 30 days" again.
+3. Rebuild the backend/worker image if you added dependencies: `docker compose build backend worker`.
+
 ### Migrations
 
 Run Alembic **inside the backend container** (recommended; all deps including `psycopg2` are installed):

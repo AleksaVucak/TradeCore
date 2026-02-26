@@ -110,7 +110,7 @@ export default function Home() {
                 Quick actions
               </CardTitle>
             </CardHeader>
-            <CardContent className="flex gap-2">
+            <CardContent className="flex gap-2 flex-wrap">
               <Link
                 href="/backtests"
                 className="text-sm font-medium text-primary underline-offset-4 hover:underline"
@@ -123,6 +123,13 @@ export default function Home() {
                 className="text-sm font-medium text-primary underline-offset-4 hover:underline"
               >
                 New strategy
+              </Link>
+              <span className="text-muted-foreground">·</span>
+              <Link
+                href="/market-data"
+                className="text-sm font-medium text-primary underline-offset-4 hover:underline"
+              >
+                Load market data
               </Link>
             </CardContent>
           </Card>

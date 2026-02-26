@@ -6,7 +6,7 @@ celery_app = Celery(
     "tradecore",
     broker=settings.celery_broker_url,
     backend=settings.redis_url,
-    include=["app.tasks"],
+    include=["app.tasks", "app.tasks.market_data"],
 )
 
 celery_app.conf.update(
