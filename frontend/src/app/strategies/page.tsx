@@ -74,7 +74,7 @@ export default function StrategiesPage() {
               {loading
                 ? "Loading your strategies…"
                 : strategies.length === 0
-                ? "No strategies yet. You’ll be able to create one from here in the next phase."
+                ? "No strategies yet. Create your first strategy to get started."
                 : "List of your strategies."}
             </CardDescription>
           </CardHeader>
@@ -83,7 +83,7 @@ export default function StrategiesPage() {
               <p className="text-sm text-muted-foreground">Loading…</p>
             ) : strategies.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No strategies found. Once creation is implemented, you’ll see them here.
+                No strategies found. Create a strategy to see it listed here.
               </p>
             ) : (
               <div className="overflow-x-auto">

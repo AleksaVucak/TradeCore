@@ -91,9 +91,9 @@ export default function NewStrategyPage() {
         return;
       }
       const created = await strategiesApi.create(token, payload);
-      // After creating, go back to strategies list; detail view will be improved later.
+      // After creating, go back to strategies list; users can open the detail page from there.
       router.push("/strategies");
-      // Optionally we could navigate to `/strategies/${created.id}` instead.
+      // Alternatively, we could navigate directly to `/strategies/${created.id}` instead.
       router.refresh();
     } catch (err) {
       const msg =
