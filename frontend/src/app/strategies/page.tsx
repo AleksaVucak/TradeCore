@@ -50,15 +50,14 @@ export default function StrategiesPage() {
         <div className="flex items-center justify-between gap-4">
           <div>
             <p className="text-sm text-muted-foreground">
-              Your saved trading strategies. New strategy creation and editing will be added next.
+              Your saved trading strategies. Create a new strategy to use in backtests later.
             </p>
           </div>
           <Link
-            href="#"
-            className="text-sm font-medium text-muted-foreground cursor-not-allowed"
-            aria-disabled
+            href="/strategies/new"
+            className="text-sm font-medium text-primary underline-offset-4 hover:underline"
           >
-            New strategy (coming soon)
+            New strategy
           </Link>
         </div>
 
