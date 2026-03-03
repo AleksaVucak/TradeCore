@@ -2,13 +2,19 @@ import uuid
 from datetime import timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.dependencies import get_current_user_id, get_db
 from app.models.backtest_run import BacktestRun, BacktestRunStatus
 from app.models.strategy import Strategy, StrategyVersion
 from app.models.symbol import Symbol
-from app.schemas.backtest import BacktestRunDetail, BacktestRunListItem, CreateBacktestRequest
+from app.schemas.backtest import (
+    BacktestRunDetail,
+    BacktestRunListItem,
+    CreateBacktestRequest,
+    EquityPointOut,
+    TradeOut,
+)
 from app.tasks.backtests import run_backtest_task
 
 router = APIRouter()
@@ -97,7 +103,100 @@ def create_backtest(
         initial_equity=body.initial_equity,
     )
 
-    return run
+    return BacktestRunDetail(
+        id=run.id,
+        symbol_id=run.symbol_id,
+        timeframe=run.timeframe,
+        status=run.status,
+        start_time=run.start_time,
+        end_time=run.end_time,
+        created_at=run.created_at,
+        error_message=run.error_message,
+        trades=[],
+        equity_curve=[],
+        metrics=None,
+    )
+
+
+def _get_run_for_user(db: Session, run_id: str, user_id: int) -> BacktestRun | None:
+    """Load run by id if it belongs to user; return None if not found or invalid."""
+    try:
+        run_uuid = uuid.UUID(run_id)
+    except ValueError:
+        return None
+    return (
+        db.query(BacktestRun)
+        .filter(BacktestRun.id == run_uuid, BacktestRun.user_id == user_id)
+        .first()
+    )
+
+
+@router.get("/{run_id}/trades", response_model=list[TradeOut])
+def get_backtest_trades(
+    run_id: str,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Get trades for a backtest run (Phase 7.2)."""
+    run = _get_run_for_user(db, run_id, user_id)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Backtest run not found",
+        )
+    run = db.query(BacktestRun).options(joinedload(BacktestRun.trades)).get(run.id)
+    return [TradeOut.model_validate(t) for t in run.trades]
+
+
+@router.get("/{run_id}/equity", response_model=list[EquityPointOut])
+def get_backtest_equity(
+    run_id: str,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Get equity curve for a backtest run (Phase 7.2)."""
+    run = _get_run_for_user(db, run_id, user_id)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Backtest run not found",
+        )
+    run = (
+        db.query(BacktestRun)
+        .options(joinedload(BacktestRun.equity_snapshots))
+        .get(run.id)
+    )
+    equity_snapshots = sorted(run.equity_snapshots, key=lambda s: s.timestamp)
+    return [
+        EquityPointOut(timestamp=s.timestamp, equity_value=s.equity_value)
+        for s in equity_snapshots
+    ]
+
+
+@router.get("/{run_id}/metrics")
+def get_backtest_metrics(
+    run_id: str,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Get metrics snapshot for a backtest run (Phase 7.2). Returns 404 if not yet available."""
+    run = _get_run_for_user(db, run_id, user_id)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Backtest run not found",
+        )
+    run = (
+        db.query(BacktestRun)
+        .options(joinedload(BacktestRun.metrics))
+        .get(run.id)
+    )
+    if run.metrics is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Metrics not available for this run (run may still be pending or failed)",
+        )
+    return run.metrics.metrics
 
 
 @router.get("/{run_id}", response_model=BacktestRunDetail)
@@ -106,7 +205,7 @@ def get_backtest(
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
-    """Get a single backtest run by id (for polling status)."""
+    """Get a single backtest run by id with trades, equity curve, and metrics (Phase 7.2)."""
     try:
         run_uuid = uuid.UUID(run_id)
     except ValueError:
@@ -116,6 +215,11 @@ def get_backtest(
         )
     run = (
         db.query(BacktestRun)
+        .options(
+            joinedload(BacktestRun.trades),
+            joinedload(BacktestRun.equity_snapshots),
+            joinedload(BacktestRun.metrics),
+        )
         .filter(BacktestRun.id == run_uuid, BacktestRun.user_id == user_id)
         .first()
     )
@@ -124,4 +228,23 @@ def get_backtest(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Backtest run not found",
         )
-    return run
+    trades = [TradeOut.model_validate(t) for t in run.trades]
+    equity_snapshots = sorted(run.equity_snapshots, key=lambda s: s.timestamp)
+    equity_curve = [
+        EquityPointOut(timestamp=s.timestamp, equity_value=s.equity_value)
+        for s in equity_snapshots
+    ]
+    metrics = run.metrics.metrics if run.metrics else None
+    return BacktestRunDetail(
+        id=run.id,
+        symbol_id=run.symbol_id,
+        timeframe=run.timeframe,
+        status=run.status,
+        start_time=run.start_time,
+        end_time=run.end_time,
+        created_at=run.created_at,
+        error_message=run.error_message,
+        trades=trades,
+        equity_curve=equity_curve,
+        metrics=metrics,
+    )
