@@ -11,7 +11,11 @@ from app.celery_app import celery_app
 from app.db.session import SessionLocal
 from app.models.backtest_run import BacktestRun, BacktestRunStatus
 from app.models.candle import Candle
+from app.models.equity_snapshot import EquitySnapshot
+from app.models.metric_snapshot import MetricSnapshot
 from app.models.strategy import Strategy, StrategyVersion
+from app.models.trade import Trade
+from app.services.backtest.types import BacktestResult
 from app.schemas.strategy_config import validate_strategy_config
 from app.services.backtest import (
     BacktestCandle,
@@ -52,6 +56,37 @@ def _update_run_status(
         run.error_message = (error_message or "")[:ERROR_MESSAGE_MAX_LEN] if error_message else None
         db.add(run)
         db.commit()
+
+
+def _persist_run_outputs(
+    db: Any,
+    run_uuid: uuid.UUID,
+    bt_result: BacktestResult,
+    metrics: dict[str, Any],
+) -> None:
+    """Persist trades, equity curve, and metrics for a completed backtest run (Phase 7.1)."""
+    for t in bt_result.trades:
+        db.add(
+            Trade(
+                backtest_run_id=run_uuid,
+                timestamp=t.timestamp,
+                side=t.side,
+                price=t.price,
+                quantity=t.quantity,
+                fee=t.fee,
+                slippage=t.slippage,
+                pnl=t.pnl,
+            )
+        )
+    for p in bt_result.equity_curve:
+        db.add(
+            EquitySnapshot(
+                backtest_run_id=run_uuid,
+                timestamp=p.timestamp,
+                equity_value=p.equity_value,
+            )
+        )
+    db.add(MetricSnapshot(backtest_run_id=run_uuid, metrics=metrics))
 
 
 @celery_app.task
@@ -177,6 +212,7 @@ def run_backtest_task(
         )
 
         if run_uuid:
+            _persist_run_outputs(db, run_uuid, bt_result, metrics)
             _update_run_status(db, run_uuid, BacktestRunStatus.COMPLETED)
 
         return {
