@@ -103,7 +103,7 @@ def run_backtest_task(
     """Async backtest task.
 
     When run_id is provided (Phase 6.4), updates BacktestRun status:
-    pending → running → completed or failed (with error_message).
+    pending → running → completed or failed. On failure, persists error_message (Phase 7.3).
 
     Loads candles and strategy config from the database, runs the RSI+MA backtest
     engine and metrics module, and returns a JSON-serializable summary.

@@ -38,6 +38,7 @@ class BacktestRunListItem(BaseModel):
     start_time: datetime
     end_time: datetime
     created_at: datetime
+    error_message: str | None = None  # Set when status is failed (Phase 7.3)
 
     class Config:
         from_attributes = True
