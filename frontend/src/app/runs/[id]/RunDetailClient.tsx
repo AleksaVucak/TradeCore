@@ -11,6 +11,54 @@ import {
 import { backtestsApi, type BacktestRunDetail } from "@/lib/api/endpoints";
 import { getToken } from "@/lib/auth";
 
+function formatPct(value: number | null | undefined): string {
+  if (value == null) return "—";
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+function formatDateRange(start: string, end: string): string {
+  try {
+    const s = new Date(start);
+    const e = new Date(end);
+    return `${s.toLocaleDateString()} – ${e.toLocaleDateString()}`;
+  } catch {
+    return `${start} – ${end}`;
+  }
+}
+
+function formatTimestamp(ts: string): string {
+  try {
+    return new Date(ts).toLocaleString();
+  } catch {
+    return ts;
+  }
+}
+
+function formatNumber(value: number, decimals = 2): string {
+  return value.toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: decimals,
+  });
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const variant =
+    status === "completed"
+      ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
+      : status === "failed"
+        ? "bg-destructive/15 text-destructive"
+        : status === "running"
+          ? "bg-blue-500/15 text-blue-700 dark:text-blue-400"
+          : "bg-muted text-muted-foreground";
+  return (
+    <span
+      className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium capitalize ${variant}`}
+    >
+      {status}
+    </span>
+  );
+}
+
 export function RunDetailClient({ runId }: { runId: string }) {
   const [run, setRun] = useState<BacktestRunDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -54,24 +102,31 @@ export function RunDetailClient({ runId }: { runId: string }) {
 
   const isFailed = run.status === "failed";
   const hasErrorMessage = isFailed && run.error_message;
+  const hasMetrics = run.status === "completed" && run.metrics && typeof run.metrics === "object";
+  const metrics = hasMetrics ? (run.metrics as Record<string, number>) : null;
 
   return (
     <>
-      <h1 className="text-xl font-semibold mt-4">
-        Run {runId.slice(0, 8)}…
-      </h1>
+      {/* Page shell */}
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <h1 className="text-xl font-semibold tracking-tight">
+          Run {runId.slice(0, 8)}…
+        </h1>
+        <StatusBadge status={run.status} />
+      </div>
       <p className="text-muted-foreground mt-1 text-sm">
-        {run.timeframe} · {run.start_time} – {run.end_time}
+        {run.timeframe} · {formatDateRange(run.start_time, run.end_time)}
       </p>
 
+      {/* Error card (failed runs) */}
       {hasErrorMessage && (
-        <Card className="mt-4 border-destructive/50 bg-destructive/5">
+        <Card className="mt-6 border-destructive/50 bg-destructive/5">
           <CardHeader className="pb-2">
             <CardTitle className="text-base text-destructive">
               Run failed
             </CardTitle>
             <CardDescription>
-              This backtest run failed. Error message (Phase 7.3):
+              This backtest run failed. Error message:
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -82,26 +137,218 @@ export function RunDetailClient({ runId }: { runId: string }) {
         </Card>
       )}
 
-      <Card className="mt-4">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium text-muted-foreground">
-            Status
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm font-medium capitalize">{run.status}</p>
-          {run.status === "completed" && run.metrics && (
-            <p className="text-muted-foreground text-sm mt-1">
-              {run.metrics.num_trades ?? 0} trades · Final equity:{" "}
-              {run.metrics.final_equity ?? "—"}
-            </p>
-          )}
-        </CardContent>
-      </Card>
+      {/* Metrics cards (completed runs with metrics) */}
+      {hasMetrics && metrics && (
+        <div className="mt-6">
+          <h2 className="text-sm font-medium text-muted-foreground mb-3">
+            Metrics
+          </h2>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+            {typeof metrics.total_return_pct === "number" && (
+              <Card>
+                <CardHeader className="pb-1 pt-3 px-4">
+                  <CardTitle className="text-xs font-medium text-muted-foreground">
+                    Total return
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pb-3 px-4">
+                  <p
+                    className={`text-lg font-semibold tabular-nums ${
+                      metrics.total_return_pct >= 0
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : "text-destructive"
+                    }`}
+                  >
+                    {formatPct(metrics.total_return_pct)}
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+            {typeof metrics.max_drawdown_pct === "number" && (
+              <Card>
+                <CardHeader className="pb-1 pt-3 px-4">
+                  <CardTitle className="text-xs font-medium text-muted-foreground">
+                    Max drawdown
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pb-3 px-4">
+                  <p className="text-lg font-semibold tabular-nums text-muted-foreground">
+                    {metrics.max_drawdown_pct.toFixed(2)}%
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+            {typeof metrics.num_trades === "number" && (
+              <Card>
+                <CardHeader className="pb-1 pt-3 px-4">
+                  <CardTitle className="text-xs font-medium text-muted-foreground">
+                    Trades
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pb-3 px-4">
+                  <p className="text-lg font-semibold tabular-nums">
+                    {metrics.num_trades}
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+            {typeof metrics.final_equity === "number" && (
+              <Card>
+                <CardHeader className="pb-1 pt-3 px-4">
+                  <CardTitle className="text-xs font-medium text-muted-foreground">
+                    Final equity
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pb-3 px-4">
+                  <p className="text-lg font-semibold tabular-nums">
+                    {formatNumber(metrics.final_equity)}
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+            {typeof metrics.win_rate === "number" && (
+              <Card>
+                <CardHeader className="pb-1 pt-3 px-4">
+                  <CardTitle className="text-xs font-medium text-muted-foreground">
+                    Win rate
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pb-3 px-4">
+                  <p className="text-lg font-semibold tabular-nums">
+                    {metrics.win_rate.toFixed(1)}%
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+            {typeof metrics.profit_factor === "number" && (
+              <Card>
+                <CardHeader className="pb-1 pt-3 px-4">
+                  <CardTitle className="text-xs font-medium text-muted-foreground">
+                    Profit factor
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pb-3 px-4">
+                  <p className="text-lg font-semibold tabular-nums">
+                    {metrics.profit_factor.toFixed(2)}
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+            {typeof metrics.sharpe_ratio === "number" && (
+              <Card>
+                <CardHeader className="pb-1 pt-3 px-4">
+                  <CardTitle className="text-xs font-medium text-muted-foreground">
+                    Sharpe ratio
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pb-3 px-4">
+                  <p className="text-lg font-semibold tabular-nums">
+                    {metrics.sharpe_ratio.toFixed(2)}
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+            {typeof metrics.annualized_return_pct === "number" && (
+              <Card>
+                <CardHeader className="pb-1 pt-3 px-4">
+                  <CardTitle className="text-xs font-medium text-muted-foreground">
+                    Ann. return
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pb-3 px-4">
+                  <p className="text-lg font-semibold tabular-nums text-muted-foreground">
+                    {formatPct(metrics.annualized_return_pct)}
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        </div>
+      )}
 
-      <p className="text-muted-foreground text-sm mt-4">
-        Full run detail with charts and metrics (Phase 8).
-      </p>
+      {/* Trades table */}
+      <Card className="mt-6">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Trades</CardTitle>
+          <CardDescription>
+            {run.trades.length === 0
+              ? "No trades for this run."
+              : `${run.trades.length} trade${run.trades.length !== 1 ? "s" : ""}.`}
+          </CardDescription>
+        </CardHeader>
+        {run.trades.length > 0 ? (
+          <CardContent className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="text-left py-3 px-2 font-medium">
+                    Timestamp
+                  </th>
+                  <th className="text-left py-3 px-2 font-medium">
+                    Side
+                  </th>
+                  <th className="text-right py-3 px-2 font-medium">
+                    Price
+                  </th>
+                  <th className="text-right py-3 px-2 font-medium">
+                    Quantity
+                  </th>
+                  <th className="text-right py-3 px-2 font-medium">
+                    Fee
+                  </th>
+                  <th className="text-right py-3 px-2 font-medium">
+                    Slippage
+                  </th>
+                  <th className="text-right py-3 px-2 font-medium">
+                    PnL
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {run.trades.map((trade) => (
+                  <tr
+                    key={trade.id}
+                    className="border-b border-border/80 hover:bg-muted/50"
+                  >
+                    <td className="py-3 px-2 text-muted-foreground whitespace-nowrap">
+                      {formatTimestamp(trade.timestamp)}
+                    </td>
+                    <td className="py-3 px-2 capitalize">{trade.side}</td>
+                    <td className="py-3 px-2 text-right tabular-nums">
+                      {formatNumber(trade.price)}
+                    </td>
+                    <td className="py-3 px-2 text-right tabular-nums">
+                      {formatNumber(trade.quantity)}
+                    </td>
+                    <td className="py-3 px-2 text-right tabular-nums text-muted-foreground">
+                      {formatNumber(trade.fee)}
+                    </td>
+                    <td className="py-3 px-2 text-right tabular-nums text-muted-foreground">
+                      {formatNumber(trade.slippage)}
+                    </td>
+                    <td className="py-3 px-2 text-right tabular-nums">
+                      {trade.pnl != null ? (
+                        <span
+                          className={
+                            trade.pnl >= 0
+                              ? "text-emerald-600 dark:text-emerald-400"
+                              : "text-destructive"
+                          }
+                        >
+                          {trade.pnl >= 0 ? "+" : ""}
+                          {formatNumber(trade.pnl)}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </CardContent>
+        ) : null}
+      </Card>
     </>
   );
 }

@@ -11,10 +11,10 @@ export default async function RunDetailPage({
     <div className="min-h-screen bg-background">
       <main className="container mx-auto max-w-5xl px-6 py-8">
         <Link
-          href="/"
+          href="/backtests"
           className="text-muted-foreground hover:text-foreground text-sm"
         >
-          ← Dashboard
+          ← Run history
         </Link>
         <RunDetailClient runId={id} />
       </main>
