@@ -8,8 +8,18 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { backtestsApi, type BacktestRunDetail } from "@/lib/api/endpoints";
+import {
+  backtestsApi,
+  marketDataApi,
+  type BacktestRunDetail,
+  type CandleResponse,
+} from "@/lib/api/endpoints";
 import { getToken } from "@/lib/auth";
+import {
+  CandlestickChart,
+  type OhlcCandle,
+  type TradeMarker,
+} from "@/components/charts/CandlestickChart";
 import {
   AreaChart,
   Area,
@@ -124,6 +134,46 @@ export function RunDetailClient({ runId }: { runId: string }) {
     if (max === min) return 0.5;
     return Math.max(0, Math.min(1, (max - initial) / (max - min)));
   }, [equityDomain, hasEquityData]);
+
+  const [ohlcCandles, setOhlcCandles] = useState<OhlcCandle[]>([]);
+  const [candlesLoading, setCandlesLoading] = useState(false);
+
+  useEffect(() => {
+    if (!run || run.status !== "completed") return;
+    const token = getToken();
+    if (!token) return;
+    setCandlesLoading(true);
+    marketDataApi
+      .candles(token, {
+        symbol_id: run.symbol_id,
+        timeframe: run.timeframe,
+        start: run.start_time,
+        end: run.end_time,
+        limit: 5000,
+      })
+      .then((data: CandleResponse[]) => {
+        setOhlcCandles(
+          data.map((c) => ({
+            timestamp: c.timestamp,
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close,
+          })),
+        );
+      })
+      .catch(() => setOhlcCandles([]))
+      .finally(() => setCandlesLoading(false));
+  }, [run]);
+
+  const tradeMarkers: TradeMarker[] = useMemo(() => {
+    if (!run?.trades || run.trades.length === 0) return [];
+    return run.trades.map((t) => ({
+      timestamp: t.timestamp,
+      side: t.side as "buy" | "sell",
+      price: t.price,
+    }));
+  }, [run?.trades]);
 
   if (loading) {
     return (
@@ -420,6 +470,31 @@ export function RunDetailClient({ runId }: { runId: string }) {
           )}
         </CardContent>
       </Card>
+
+      {/* Candlestick chart with trade markers */}
+      {run.status === "completed" && (
+        <Card className="mt-6">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Price chart</CardTitle>
+            <CardDescription>
+              {candlesLoading
+                ? "Loading candle data…"
+                : ohlcCandles.length > 0
+                  ? `${ohlcCandles.length} candle${ohlcCandles.length !== 1 ? "s" : ""} · ${run.timeframe}${run.trades.length > 0 ? ` · ${run.trades.length} trade marker${run.trades.length !== 1 ? "s" : ""}` : ""}`
+                  : "No candle data available for this symbol and timeframe."}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {candlesLoading ? (
+              <p className="text-muted-foreground text-sm py-8 text-center">
+                Loading candle data…
+              </p>
+            ) : (
+              <CandlestickChart candles={ohlcCandles} trades={tradeMarkers} />
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Trades table */}
       <Card className="mt-6">
