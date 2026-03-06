@@ -31,14 +31,20 @@ class EquityPointOut(BaseModel):
 
 
 class BacktestRunListItem(BaseModel):
+    """List item for run history table (Phase 8.1)."""
+
     id: UUID
     symbol_id: int
+    symbol_name: str | None = None  # e.g. BTC (Phase 8.1)
+    strategy_name: str | None = None  # e.g. My Strategy (Phase 8.1)
     timeframe: str
     status: str
     start_time: datetime
     end_time: datetime
     created_at: datetime
     error_message: str | None = None  # Set when status is failed (Phase 7.3)
+    total_return_pct: float | None = None  # From metrics when completed (Phase 8.1)
+    max_drawdown_pct: float | None = None  # From metrics when completed (Phase 8.1)
 
     class Config:
         from_attributes = True

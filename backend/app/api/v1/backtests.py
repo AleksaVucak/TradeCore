@@ -26,14 +26,39 @@ def list_backtests(
     db: Session = Depends(get_db),
     limit: int = 20,
 ):
+    """List backtest runs with symbol, strategy, return, drawdown for run history (Phase 8.1)."""
     runs = (
         db.query(BacktestRun)
+        .options(
+            joinedload(BacktestRun.symbol),
+            joinedload(BacktestRun.strategy_version).joinedload(StrategyVersion.strategy),
+            joinedload(BacktestRun.metrics),
+        )
         .filter(BacktestRun.user_id == user_id)
         .order_by(BacktestRun.created_at.desc())
         .limit(limit)
         .all()
     )
-    return runs
+    out = []
+    for r in runs:
+        metrics = r.metrics.metrics if r.metrics else {}
+        out.append(
+            BacktestRunListItem(
+                id=r.id,
+                symbol_id=r.symbol_id,
+                symbol_name=r.symbol.symbol if r.symbol else None,
+                strategy_name=r.strategy_version.strategy.name if r.strategy_version and r.strategy_version.strategy else None,
+                timeframe=r.timeframe,
+                status=r.status,
+                start_time=r.start_time,
+                end_time=r.end_time,
+                created_at=r.created_at,
+                error_message=r.error_message,
+                total_return_pct=metrics.get("total_return_pct"),
+                max_drawdown_pct=metrics.get("max_drawdown_pct"),
+            )
+        )
+    return out
 
 
 @router.post("", response_model=BacktestRunDetail, status_code=status.HTTP_201_CREATED)

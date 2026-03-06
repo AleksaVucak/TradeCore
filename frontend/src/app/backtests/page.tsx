@@ -1,16 +1,188 @@
+"use client";
+
 import Link from "next/link";
+import { useEffect, useState } from "react";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { backtestsApi, type BacktestRunListItem } from "@/lib/api/endpoints";
+import { getToken } from "@/lib/auth";
+
+function formatPct(value: number | null | undefined): string {
+  if (value == null) return "—";
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+function formatDateRange(start: string, end: string): string {
+  try {
+    const s = new Date(start);
+    const e = new Date(end);
+    return `${s.toLocaleDateString()} – ${e.toLocaleDateString()}`;
+  } catch {
+    return `${start} – ${end}`;
+  }
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const variant =
+    status === "completed"
+      ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
+      : status === "failed"
+        ? "bg-destructive/15 text-destructive"
+        : status === "running"
+          ? "bg-blue-500/15 text-blue-700 dark:text-blue-400"
+          : "bg-muted text-muted-foreground";
+  return (
+    <span
+      className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium capitalize ${variant}`}
+    >
+      {status}
+    </span>
+  );
+}
 
 export default function BacktestsPage() {
+  const [runs, setRuns] = useState<BacktestRunListItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const token = getToken();
+    if (!token) {
+      setError("Please log in to view run history.");
+      setLoading(false);
+      return;
+    }
+    backtestsApi
+      .list(token)
+      .then((data) => {
+        setRuns(data);
+        setError(null);
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : "Failed to load runs");
+        setRuns([]);
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b border-border px-6 py-4">
-        <Link href="/" className="text-muted-foreground hover:text-foreground text-sm">
+        <Link
+          href="/"
+          className="text-muted-foreground hover:text-foreground text-sm"
+        >
           ← Dashboard
         </Link>
-        <h1 className="text-xl font-semibold tracking-tight mt-2">Backtests</h1>
+        <h1 className="text-xl font-semibold tracking-tight mt-2">
+          Run history
+        </h1>
+        <p className="text-muted-foreground text-sm mt-1">
+          Table of backtest runs: status, symbol, strategy, return, drawdown
+        </p>
       </header>
       <main className="container mx-auto max-w-5xl px-6 py-8">
-        <p className="text-muted-foreground">Create backtest and run history (Phase 5).</p>
+        {error && (
+          <p className="text-destructive text-sm mb-4">{error}</p>
+        )}
+        {loading ? (
+          <p className="text-muted-foreground text-sm">Loading runs…</p>
+        ) : runs.length === 0 ? (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">No runs yet</CardTitle>
+              <CardDescription>
+                Create a backtest from the dashboard or via the API to see run
+                history here.
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        ) : (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Runs</CardTitle>
+              <CardDescription>
+                {runs.length} run{runs.length !== 1 ? "s" : ""}. Click a run to
+                view details.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="text-left py-3 px-2 font-medium">
+                      Run
+                    </th>
+                    <th className="text-left py-3 px-2 font-medium">
+                      Status
+                    </th>
+                    <th className="text-left py-3 px-2 font-medium">
+                      Symbol
+                    </th>
+                    <th className="text-left py-3 px-2 font-medium">
+                      Strategy
+                    </th>
+                    <th className="text-right py-3 px-2 font-medium">
+                      Return
+                    </th>
+                    <th className="text-right py-3 px-2 font-medium">
+                      Drawdown
+                    </th>
+                    <th className="text-left py-3 px-2 font-medium">
+                      Timeframe
+                    </th>
+                    <th className="text-left py-3 px-2 font-medium">
+                      Date range
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {runs.map((run) => (
+                    <tr
+                      key={run.id}
+                      className="border-b border-border/80 hover:bg-muted/50"
+                    >
+                      <td className="py-3 px-2">
+                        <Link
+                          href={`/runs/${run.id}`}
+                          className="text-primary font-medium underline-offset-4 hover:underline"
+                        >
+                          {run.id.slice(0, 8)}…
+                        </Link>
+                      </td>
+                      <td className="py-3 px-2">
+                        <StatusBadge status={run.status} />
+                      </td>
+                      <td className="py-3 px-2 text-muted-foreground">
+                        {run.symbol_name ?? run.symbol_id}
+                      </td>
+                      <td className="py-3 px-2 text-muted-foreground">
+                        {run.strategy_name ?? "—"}
+                      </td>
+                      <td className="py-3 px-2 text-right tabular-nums">
+                        {formatPct(run.total_return_pct)}
+                      </td>
+                      <td className="py-3 px-2 text-right tabular-nums text-muted-foreground">
+                        {formatPct(run.max_drawdown_pct)}
+                      </td>
+                      <td className="py-3 px-2 text-muted-foreground">
+                        {run.timeframe}
+                      </td>
+                      <td className="py-3 px-2 text-muted-foreground whitespace-nowrap">
+                        {formatDateRange(run.start_time, run.end_time)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
+        )}
       </main>
     </div>
   );
