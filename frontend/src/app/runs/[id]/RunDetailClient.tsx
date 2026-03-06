@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Card,
   CardContent,
@@ -10,6 +10,16 @@ import {
 } from "@/components/ui/card";
 import { backtestsApi, type BacktestRunDetail } from "@/lib/api/endpoints";
 import { getToken } from "@/lib/auth";
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  ReferenceLine,
+} from "recharts";
 
 function formatPct(value: number | null | undefined): string {
   if (value == null) return "—";
@@ -83,6 +93,37 @@ export function RunDetailClient({ runId }: { runId: string }) {
       })
       .finally(() => setLoading(false));
   }, [runId]);
+
+  const chartData = useMemo(() => {
+    if (!run?.equity_curve || run.equity_curve.length === 0) return [];
+    return [...run.equity_curve]
+      .sort(
+        (a, b) =>
+          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+      )
+      .map((p) => ({
+        timestamp: p.timestamp,
+        equity_value: p.equity_value,
+      }));
+  }, [run?.equity_curve]);
+
+  const hasEquityData = chartData.length > 0;
+
+  const equityDomain = useMemo(() => {
+    if (!hasEquityData) return { min: 0, max: 0, initial: 0 };
+    const values = chartData.map((d) => d.equity_value);
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const initial = values[0];
+    return { min, max, initial };
+  }, [chartData, hasEquityData]);
+
+  const gradientOffset = useMemo(() => {
+    if (!hasEquityData) return 0;
+    const { min, max, initial } = equityDomain;
+    if (max === min) return 0.5;
+    return Math.max(0, Math.min(1, (max - initial) / (max - min)));
+  }, [equityDomain, hasEquityData]);
 
   if (loading) {
     return (
@@ -265,6 +306,120 @@ export function RunDetailClient({ runId }: { runId: string }) {
           </div>
         </div>
       )}
+
+      {/* Equity curve chart */}
+      <Card className="mt-6">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Equity curve</CardTitle>
+          <CardDescription>
+            {hasEquityData
+              ? `Equity over time (${chartData.length} point${chartData.length !== 1 ? "s" : ""})`
+              : "No equity data for this run."}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {hasEquityData ? (
+            <div className="h-[320px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart
+                  data={chartData}
+                  margin={{ top: 10, right: 10, left: 10, bottom: 5 }}
+                >
+                  <defs>
+                    <linearGradient id="equityStroke" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset={0} stopColor="#22c55e" />
+                      <stop offset={gradientOffset} stopColor="#22c55e" />
+                      <stop offset={gradientOffset} stopColor="#ef4444" />
+                      <stop offset={1} stopColor="#ef4444" />
+                    </linearGradient>
+                    <linearGradient id="equityFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset={0} stopColor="#22c55e" stopOpacity={0.25} />
+                      <stop offset={gradientOffset} stopColor="#22c55e" stopOpacity={0.05} />
+                      <stop offset={gradientOffset} stopColor="#ef4444" stopOpacity={0.05} />
+                      <stop offset={1} stopColor="#ef4444" stopOpacity={0.25} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    stroke="hsl(var(--border))"
+                    opacity={0.4}
+                  />
+                  <XAxis
+                    dataKey="timestamp"
+                    tickFormatter={(ts) =>
+                      new Date(ts).toLocaleDateString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                      })
+                    }
+                    tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+                    axisLine={{ stroke: "hsl(var(--border))" }}
+                    tickLine={{ stroke: "hsl(var(--border))" }}
+                  />
+                  <YAxis
+                    dataKey="equity_value"
+                    tickFormatter={(v) =>
+                      v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(v)
+                    }
+                    tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+                    axisLine={{ stroke: "hsl(var(--border))" }}
+                    tickLine={{ stroke: "hsl(var(--border))" }}
+                    domain={["auto", "auto"]}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: "hsl(var(--card))",
+                      border: "1px solid hsl(var(--border))",
+                      borderRadius: "var(--radius)",
+                      fontSize: 12,
+                    }}
+                    labelStyle={{ color: "hsl(var(--foreground))" }}
+                    formatter={(value: number | undefined) => [
+                      (value ?? 0).toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      }),
+                      "Equity",
+                    ]}
+                    labelFormatter={(label) =>
+                      new Date(label).toLocaleString(undefined, {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      })
+                    }
+                  />
+                  <ReferenceLine
+                    y={equityDomain.initial}
+                    stroke="hsl(var(--muted-foreground))"
+                    strokeDasharray="4 4"
+                    strokeOpacity={0.6}
+                    label={{
+                      value: "Start",
+                      position: "insideTopRight",
+                      fill: "hsl(var(--muted-foreground))",
+                      fontSize: 10,
+                    }}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="equity_value"
+                    stroke="url(#equityStroke)"
+                    strokeWidth={2.5}
+                    fill="url(#equityFill)"
+                    dot={false}
+                    activeDot={{ r: 4, fill: "#fff", strokeWidth: 2 }}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <p className="text-muted-foreground text-sm py-8 text-center">
+              Equity curve is only available for completed runs with trade
+              activity or equity snapshots.
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Trades table */}
       <Card className="mt-6">

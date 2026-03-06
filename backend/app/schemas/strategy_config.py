@@ -41,9 +41,9 @@ class RsiMaConfig(BaseModel):
     slippage_rate: float = Field(0.0005, ge=0.0, lt=1.0, description="Slippage assumption (0.0005 = 0.05%)")
 
     @model_validator(mode="after")
-    def sell_above_buy(self) -> "RsiMaConfig":
-        if self.rsi_sell_threshold <= self.rsi_buy_threshold:
-            raise ValueError("rsi_sell_threshold must be greater than rsi_buy_threshold")
+    def sell_at_least_buy(self) -> "RsiMaConfig":
+        if self.rsi_sell_threshold < self.rsi_buy_threshold:
+            raise ValueError("rsi_sell_threshold must be >= rsi_buy_threshold")
         return self
 
     def to_config_dict(self) -> dict[str, Any]:

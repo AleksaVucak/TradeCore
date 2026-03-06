@@ -1,0 +1,22 @@
+# Fix "Module not found: Can't resolve 'recharts'" when running frontend in Docker
+
+The frontend container uses a volume for node_modules. After adding recharts to package.json,
+that volume still has the old node_modules. Use one of these:
+
+## Option A – Install inside the running container (quick)
+
+If the frontend container is already running:
+
+  docker compose exec frontend npm install
+
+Then restart the dev server (e.g. stop with Ctrl+C and run `docker compose up` again),
+or refresh the app if it hot-reloads.
+
+## Option B – Rebuild the frontend image and recreate the container
+
+From the project root (tradecore/):
+
+  docker compose build frontend --no-cache
+  docker compose up -d --force-recreate frontend
+
+This rebuilds the image with recharts and recreates the container (and its node_modules volume).

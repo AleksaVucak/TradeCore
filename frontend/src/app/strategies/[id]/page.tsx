@@ -48,8 +48,15 @@ export default function StrategyDetailPage() {
   const [configForm, setConfigForm] = useState<ConfigForm | null>(null);
   const [savingConfig, setSavingConfig] = useState(false);
 
-  const token = typeof window !== "undefined" ? getToken() : null;
+  const [token, setToken] = useState<string | null>(null);
   const hasValidParams = !!token && !!strategyId && !Number.isNaN(strategyId);
+
+  useEffect(() => {
+    // Read token only on the client after mount to avoid SSR/client mismatches.
+    Promise.resolve().then(() => {
+      setToken(getToken());
+    });
+  }, []);
 
   useEffect(() => {
     if (!hasValidParams || !token) {
@@ -66,8 +73,8 @@ export default function StrategyDetailPage() {
         if (cfg) {
           setConfigForm({
             rsi_period: String(cfg.rsi_period ?? 14),
-            rsi_buy_threshold: String(cfg.rsi_buy_threshold ?? 30),
-            rsi_sell_threshold: String(cfg.rsi_sell_threshold ?? 70),
+            rsi_buy_threshold: String(cfg.rsi_buy_threshold ?? 50),
+            rsi_sell_threshold: String(cfg.rsi_sell_threshold ?? 50),
             ma_period: String(cfg.ma_period ?? 20),
             position_size_pct: String(cfg.position_size_pct ?? 1.0),
             stop_loss_pct: String(cfg.stop_loss_pct ?? 2.0),
@@ -78,8 +85,8 @@ export default function StrategyDetailPage() {
         } else {
           setConfigForm({
             rsi_period: "14",
-            rsi_buy_threshold: "30",
-            rsi_sell_threshold: "70",
+            rsi_buy_threshold: "50",
+            rsi_sell_threshold: "50",
             ma_period: "20",
             position_size_pct: "1.0",
             stop_loss_pct: "2.0",

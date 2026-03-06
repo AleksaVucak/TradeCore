@@ -35,14 +35,16 @@ class TestRsiMaConfig:
         assert config.position_size_pct == 0.5
         assert config.to_config_dict()["rsi_period"] == 7
 
-    def test_sell_must_be_above_buy(self) -> None:
+    def test_sell_below_buy_rejected(self) -> None:
         with pytest.raises(ValidationError) as exc_info:
             RsiMaConfig(rsi_buy_threshold=70.0, rsi_sell_threshold=30.0)
-        assert "rsi_sell_threshold must be greater" in str(exc_info.value)
+        assert "rsi_sell_threshold" in str(exc_info.value)
 
-    def test_sell_equal_buy_rejected(self) -> None:
-        with pytest.raises(ValidationError):
-            RsiMaConfig(rsi_buy_threshold=50.0, rsi_sell_threshold=50.0)
+    def test_sell_equal_buy_allowed(self) -> None:
+        """50/50 is valid: buy when RSI < 50, sell when RSI > 50."""
+        config = RsiMaConfig(rsi_buy_threshold=50.0, rsi_sell_threshold=50.0)
+        assert config.rsi_buy_threshold == 50.0
+        assert config.rsi_sell_threshold == 50.0
 
     def test_bounds_rsi_period(self) -> None:
         with pytest.raises(ValidationError):
