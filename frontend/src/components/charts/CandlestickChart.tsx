@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import {
   createChart,
   CandlestickSeries,
+  HistogramSeries,
   createSeriesMarkers,
   ColorType,
   type IChartApi,
@@ -29,6 +30,17 @@ export type TradeMarker = {
   price: number;
 };
 
+export type RegimeBand = {
+  timestamp: string;
+  regime: string;
+};
+
+const REGIME_COLORS: Record<string, string> = {
+  trend: "rgba(34, 197, 94, 0.18)",
+  range: "rgba(59, 130, 246, 0.18)",
+  high_vol: "rgba(239, 68, 68, 0.18)",
+};
+
 function toUnixTimestamp(iso: string): number {
   return Math.floor(new Date(iso).getTime() / 1000);
 }
@@ -36,9 +48,11 @@ function toUnixTimestamp(iso: string): number {
 export function CandlestickChart({
   candles,
   trades,
+  regimes = [],
 }: {
   candles: OhlcCandle[];
   trades: TradeMarker[];
+  regimes?: RegimeBand[];
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -70,6 +84,34 @@ export function CandlestickChart({
       },
     });
     chartRef.current = chart;
+
+    if (regimes.length > 0) {
+      const regimeMap = new Map<number, string>();
+      for (const r of regimes) {
+        regimeMap.set(toUnixTimestamp(r.timestamp), r.regime);
+      }
+
+      const maxPrice = Math.max(...candles.map((c) => c.high));
+      const regimeData = candles.map((c) => {
+        const ts = toUnixTimestamp(c.timestamp);
+        const regime = regimeMap.get(ts);
+        return {
+          time: ts as Time,
+          value: maxPrice * 1.1,
+          color: regime ? (REGIME_COLORS[regime] ?? "rgba(128,128,128,0.1)") : "transparent",
+        };
+      });
+
+      const regimeSeries = chart.addSeries(HistogramSeries, {
+        priceScaleId: "",
+        lastValueVisible: false,
+        priceLineVisible: false,
+      });
+      regimeSeries.priceScale().applyOptions({
+        scaleMargins: { top: 0, bottom: 0 },
+      });
+      regimeSeries.setData(regimeData);
+    }
 
     const seriesOptions: DeepPartial<CandlestickSeriesOptions> = {
       upColor: "#22c55e",
@@ -126,7 +168,7 @@ export function CandlestickChart({
       chart.remove();
       chartRef.current = null;
     };
-  }, [candles, trades]);
+  }, [candles, trades, regimes]);
 
   if (candles.length === 0) {
     return (

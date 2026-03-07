@@ -11,14 +11,17 @@ import {
 import {
   backtestsApi,
   marketDataApi,
+  regimesApi,
   type BacktestRunDetail,
   type CandleResponse,
+  type RegimeLabelOut,
 } from "@/lib/api/endpoints";
 import { getToken } from "@/lib/auth";
 import {
   CandlestickChart,
   type OhlcCandle,
   type TradeMarker,
+  type RegimeBand,
 } from "@/components/charts/CandlestickChart";
 import {
   AreaChart,
@@ -137,6 +140,7 @@ export function RunDetailClient({ runId }: { runId: string }) {
 
   const [ohlcCandles, setOhlcCandles] = useState<OhlcCandle[]>([]);
   const [candlesLoading, setCandlesLoading] = useState(false);
+  const [regimeLabels, setRegimeLabels] = useState<RegimeLabelOut[]>([]);
 
   useEffect(() => {
     if (!run || run.status !== "completed") return;
@@ -165,6 +169,33 @@ export function RunDetailClient({ runId }: { runId: string }) {
       .catch(() => setOhlcCandles([]))
       .finally(() => setCandlesLoading(false));
   }, [run]);
+
+  useEffect(() => {
+    if (!run || run.status !== "completed") return;
+    const token = getToken();
+    if (!token) return;
+    regimesApi
+      .getForRun(token, runId)
+      .then((data) => setRegimeLabels(data.labels))
+      .catch(() => setRegimeLabels([]));
+  }, [run, runId]);
+
+  const regimeBands: RegimeBand[] = useMemo(() => {
+    return regimeLabels.map((l) => ({
+      timestamp: l.timestamp,
+      regime: l.regime,
+    }));
+  }, [regimeLabels]);
+
+  const regimeSummary = useMemo(() => {
+    if (regimeLabels.length === 0) return null;
+    const counts: Record<string, number> = {};
+    for (const l of regimeLabels) {
+      counts[l.regime] = (counts[l.regime] || 0) + 1;
+    }
+    const total = regimeLabels.length;
+    return { counts, total };
+  }, [regimeLabels]);
 
   const tradeMarkers: TradeMarker[] = useMemo(() => {
     if (!run?.trades || run.trades.length === 0) return [];
@@ -490,8 +521,57 @@ export function RunDetailClient({ runId }: { runId: string }) {
                 Loading candle data…
               </p>
             ) : (
-              <CandlestickChart candles={ohlcCandles} trades={tradeMarkers} />
+              <CandlestickChart candles={ohlcCandles} trades={tradeMarkers} regimes={regimeBands} />
             )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Regime summary */}
+      {run.status === "completed" && regimeSummary && (
+        <Card className="mt-6">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Market regime analysis</CardTitle>
+            <CardDescription>
+              ML-predicted regime for each bar in this run window ({regimeSummary.total} bars labeled)
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-wrap gap-4">
+              {(["trend", "range", "high_vol"] as const).map((regime) => {
+                const count = regimeSummary.counts[regime] ?? 0;
+                const pct = regimeSummary.total > 0 ? ((count / regimeSummary.total) * 100).toFixed(1) : "0.0";
+                const colorClasses: Record<string, string> = {
+                  trend: "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
+                  range: "bg-blue-500/20 text-blue-600 dark:text-blue-400 border-blue-500/30",
+                  high_vol: "bg-red-500/20 text-red-600 dark:text-red-400 border-red-500/30",
+                };
+                const dotColors: Record<string, string> = {
+                  trend: "bg-emerald-500",
+                  range: "bg-blue-500",
+                  high_vol: "bg-red-500",
+                };
+                const labels: Record<string, string> = {
+                  trend: "Trend",
+                  range: "Range",
+                  high_vol: "High Volatility",
+                };
+                return (
+                  <div
+                    key={regime}
+                    className={`flex items-center gap-3 rounded-lg border px-4 py-3 ${colorClasses[regime]}`}
+                  >
+                    <span className={`h-3 w-3 rounded-full ${dotColors[regime]}`} />
+                    <div>
+                      <p className="text-sm font-medium">{labels[regime]}</p>
+                      <p className="text-xs opacity-80">
+                        {count} bars · {pct}%
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </CardContent>
         </Card>
       )}
