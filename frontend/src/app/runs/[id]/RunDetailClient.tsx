@@ -15,6 +15,7 @@ import {
   type BacktestRunDetail,
   type CandleResponse,
   type RegimeLabelOut,
+  type RegimePerformanceResponse,
 } from "@/lib/api/endpoints";
 import { getToken } from "@/lib/auth";
 import {
@@ -141,6 +142,7 @@ export function RunDetailClient({ runId }: { runId: string }) {
   const [ohlcCandles, setOhlcCandles] = useState<OhlcCandle[]>([]);
   const [candlesLoading, setCandlesLoading] = useState(false);
   const [regimeLabels, setRegimeLabels] = useState<RegimeLabelOut[]>([]);
+  const [regimePerformance, setRegimePerformance] = useState<RegimePerformanceResponse | null>(null);
 
   useEffect(() => {
     if (!run || run.status !== "completed") return;
@@ -178,6 +180,16 @@ export function RunDetailClient({ runId }: { runId: string }) {
       .getForRun(token, runId)
       .then((data) => setRegimeLabels(data.labels))
       .catch(() => setRegimeLabels([]));
+  }, [run, runId]);
+
+  useEffect(() => {
+    if (!run || run.status !== "completed") return;
+    const token = getToken();
+    if (!token) return;
+    regimesApi
+      .getPerformanceForRun(token, runId)
+      .then((data) => setRegimePerformance(data))
+      .catch(() => setRegimePerformance(null));
   }, [run, runId]);
 
   const regimeBands: RegimeBand[] = useMemo(() => {
@@ -572,6 +584,114 @@ export function RunDetailClient({ runId }: { runId: string }) {
                 );
               })}
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Per-regime performance breakdown */}
+      {run.status === "completed" && regimePerformance && regimePerformance.regimes.length > 0 && (
+        <Card className="mt-6">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Performance by regime</CardTitle>
+            <CardDescription>
+              Trade results grouped by the market regime each trade occurred in
+              {regimePerformance.total_trades_matched > 0
+                ? ` (${regimePerformance.total_trades_matched} trade${regimePerformance.total_trades_matched !== 1 ? "s" : ""} matched)`
+                : ""}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="text-left py-3 px-2 font-medium">Regime</th>
+                  <th className="text-right py-3 px-2 font-medium">Bars</th>
+                  <th className="text-right py-3 px-2 font-medium">Trades</th>
+                  <th className="text-right py-3 px-2 font-medium">W / L</th>
+                  <th className="text-right py-3 px-2 font-medium">Win rate</th>
+                  <th className="text-right py-3 px-2 font-medium">Total PnL</th>
+                  <th className="text-right py-3 px-2 font-medium">Avg PnL</th>
+                </tr>
+              </thead>
+              <tbody>
+                {regimePerformance.regimes.map((r) => {
+                  const dotColors: Record<string, string> = {
+                    trend: "bg-emerald-500",
+                    range: "bg-blue-500",
+                    high_vol: "bg-red-500",
+                  };
+                  return (
+                    <tr
+                      key={r.regime}
+                      className="border-b border-border/80 hover:bg-muted/50"
+                    >
+                      <td className="py-3 px-2">
+                        <div className="flex items-center gap-2">
+                          <span className={`inline-block h-2.5 w-2.5 rounded-full ${dotColors[r.regime] ?? "bg-gray-400"}`} />
+                          <span className="font-medium">{r.label}</span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-2 text-right tabular-nums text-muted-foreground">
+                        {r.bars} <span className="text-xs opacity-70">({r.bars_pct}%)</span>
+                      </td>
+                      <td className="py-3 px-2 text-right tabular-nums">
+                        {r.num_trades}
+                      </td>
+                      <td className="py-3 px-2 text-right tabular-nums text-muted-foreground">
+                        {r.num_trades > 0 ? `${r.wins} / ${r.losses}` : "—"}
+                      </td>
+                      <td className="py-3 px-2 text-right tabular-nums">
+                        {r.win_rate != null ? (
+                          <span
+                            className={
+                              r.win_rate >= 50
+                                ? "text-emerald-600 dark:text-emerald-400"
+                                : "text-destructive"
+                            }
+                          >
+                            {r.win_rate.toFixed(1)}%
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-2 text-right tabular-nums">
+                        {r.num_trades > 0 ? (
+                          <span
+                            className={
+                              r.total_pnl >= 0
+                                ? "text-emerald-600 dark:text-emerald-400"
+                                : "text-destructive"
+                            }
+                          >
+                            {r.total_pnl >= 0 ? "+" : ""}
+                            {formatNumber(r.total_pnl)}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-2 text-right tabular-nums">
+                        {r.avg_pnl != null ? (
+                          <span
+                            className={
+                              r.avg_pnl >= 0
+                                ? "text-emerald-600 dark:text-emerald-400"
+                                : "text-destructive"
+                            }
+                          >
+                            {r.avg_pnl >= 0 ? "+" : ""}
+                            {formatNumber(r.avg_pnl)}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </CardContent>
         </Card>
       )}

@@ -1,4 +1,4 @@
-"""API endpoints for regime labels (Phase 9.3)."""
+"""API endpoints for regime labels (Phase 9.3) and performance (Phase 9.5)."""
 
 from __future__ import annotations
 
@@ -11,8 +11,13 @@ from sqlalchemy.orm import Session
 from app.dependencies import get_current_user_id, get_db
 from app.models.backtest_run import BacktestRun
 from app.models.regime_label import RegimeLabel
-from app.schemas.regime import RegimeLabelOut, RegimeLabelResponse
+from app.schemas.regime import (
+    RegimeLabelOut,
+    RegimeLabelResponse,
+    RegimePerformanceResponse,
+)
 from app.services.ml.inference import get_latest_model
+from app.services.ml.regime_performance import compute_regime_performance
 
 router = APIRouter()
 
@@ -126,3 +131,56 @@ def get_regime_labels_for_run(
         timeframe=run.timeframe,
         labels=[RegimeLabelOut(timestamp=lbl.timestamp, regime=lbl.regime) for lbl in labels],
     )
+
+
+@router.get("/run/{run_id}/performance", response_model=RegimePerformanceResponse)
+def get_regime_performance_for_run(
+    run_id: str,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Compute per-regime performance for a backtest run (Phase 9.5).
+
+    Joins trades with regime labels and returns aggregated metrics
+    (PnL, win rate, trade count) broken down by regime.
+    """
+    try:
+        run_uuid = uuid.UUID(run_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Backtest run not found",
+        )
+
+    run = (
+        db.query(BacktestRun)
+        .filter(BacktestRun.id == run_uuid, BacktestRun.user_id == user_id)
+        .first()
+    )
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Backtest run not found",
+        )
+
+    meta = get_latest_model(db, run.symbol_id, run.timeframe)
+    if meta is None:
+        return RegimePerformanceResponse(
+            run_id=run_id,
+            total_bars=0,
+            total_trades_matched=0,
+            regimes=[],
+        )
+
+    result = compute_regime_performance(
+        db,
+        run_id=str(run.id),
+        symbol_id=run.symbol_id,
+        timeframe=run.timeframe,
+        start_time=run.start_time,
+        end_time=run.end_time,
+        model_id=meta.id,
+    )
+
+    return RegimePerformanceResponse(**result)
