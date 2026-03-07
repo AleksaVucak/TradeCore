@@ -1,9 +1,10 @@
 """
-Training pipeline for ML regime classifier (Phase 9.2).
+Training pipeline for ML regime classifier (Phase 9.2 + 9.6 fine-tuning).
 
 Fetches OHLCV candles from the database, computes feature matrix, generates
-heuristic regime labels, trains a Random Forest classifier, persists the
-model artifact to disk, and writes an MLModelMetadata row.
+heuristic regime labels, trains a Random Forest classifier (optionally with
+hyperparameter search), persists the model artifact to disk, and writes an
+MLModelMetadata row.
 """
 
 from __future__ import annotations
@@ -16,7 +17,11 @@ from typing import Any
 import joblib
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, classification_report
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import (
+    RandomizedSearchCV,
+    StratifiedKFold,
+    train_test_split,
+)
 from sqlalchemy.orm import Session
 
 from app.models.candle import Candle
@@ -37,6 +42,14 @@ FEATURE_KEYS: list[str] = [
     "volume_ratio_20",
     "bb_width_20",
 ]
+
+DEFAULT_PARAM_GRID: dict[str, list] = {
+    "n_estimators": [100, 200, 300, 500],
+    "max_depth": [8, 12, 16, 20, None],
+    "min_samples_split": [2, 5, 10],
+    "min_samples_leaf": [1, 2, 4],
+    "max_features": ["sqrt", "log2", None],
+}
 
 
 def _fetch_candles(
@@ -125,13 +138,17 @@ def train_regime_model(
     n_estimators: int = 200,
     max_depth: int | None = 12,
     model_name: str = "regime_rf",
+    tune: bool = False,
+    tune_n_iter: int = 30,
+    tune_cv: int = 5,
+    tune_param_grid: dict[str, list] | None = None,
 ) -> dict[str, Any]:
     """
     End-to-end training pipeline.
 
     1. Fetches candles from DB
     2. Computes features + heuristic labels
-    3. Trains RandomForestClassifier
+    3. Trains RandomForestClassifier (with optional hyperparameter tuning)
     4. Saves model artifact to disk
     5. Writes MLModelMetadata row
     6. Returns summary dict with metrics and metadata id
@@ -146,13 +163,17 @@ def train_regime_model(
         vol_threshold_pct: percentile threshold for "high_vol".
         test_size: fraction held out for evaluation.
         random_state: seed for reproducibility.
-        n_estimators: number of trees in the forest.
-        max_depth: max tree depth (None = unlimited).
+        n_estimators: number of trees in the forest (used when tune=False).
+        max_depth: max tree depth, None = unlimited (used when tune=False).
         model_name: name prefix for the artifact file and DB row.
+        tune: if True, run RandomizedSearchCV for hyperparameter tuning.
+        tune_n_iter: number of random parameter combinations to try.
+        tune_cv: number of cross-validation folds.
+        tune_param_grid: custom parameter grid for tuning (uses defaults if None).
 
     Returns:
         Dict with keys: model_id, artifact_path, accuracy, classification_report,
-        n_train, n_test, label_distribution.
+        n_train, n_test, label_distribution, and optionally tuning_* keys.
     """
     candles = _fetch_candles(db, symbol_id, timeframe, start, end)
     if len(candles) < 60:
@@ -177,14 +198,59 @@ def train_regime_model(
         X, y, test_size=test_size, random_state=random_state, stratify=y
     )
 
-    clf = RandomForestClassifier(
-        n_estimators=n_estimators,
-        max_depth=max_depth,
-        random_state=random_state,
-        class_weight="balanced",
-        n_jobs=-1,
-    )
-    clf.fit(X_train, y_train)
+    tuning_info: dict[str, Any] = {}
+
+    if tune:
+        param_grid = tune_param_grid or DEFAULT_PARAM_GRID
+        base_clf = RandomForestClassifier(
+            random_state=random_state,
+            class_weight="balanced",
+            n_jobs=-1,
+        )
+        cv = StratifiedKFold(n_splits=tune_cv, shuffle=True, random_state=random_state)
+        search = RandomizedSearchCV(
+            base_clf,
+            param_distributions=param_grid,
+            n_iter=tune_n_iter,
+            cv=cv,
+            scoring="f1_weighted",
+            random_state=random_state,
+            n_jobs=-1,
+            refit=True,
+        )
+        search.fit(X_train, y_train)
+        clf = search.best_estimator_
+
+        best_params = search.best_params_
+        serializable_params = {
+            k: (int(v) if isinstance(v, (int, float)) and not isinstance(v, bool)
+                 else v)
+            for k, v in best_params.items()
+        }
+
+        tuning_info = {
+            "tuned": True,
+            "best_params": serializable_params,
+            "cv_best_score": round(float(search.best_score_), 4),
+            "cv_folds": tune_cv,
+            "n_iter": tune_n_iter,
+        }
+    else:
+        clf = RandomForestClassifier(
+            n_estimators=n_estimators,
+            max_depth=max_depth,
+            random_state=random_state,
+            class_weight="balanced",
+            n_jobs=-1,
+        )
+        clf.fit(X_train, y_train)
+        tuning_info = {
+            "tuned": False,
+            "best_params": {
+                "n_estimators": n_estimators,
+                "max_depth": max_depth,
+            },
+        }
 
     y_pred = clf.predict(X_test)
     acc = accuracy_score(y_test, y_pred)
@@ -192,7 +258,8 @@ def train_regime_model(
 
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     ts_tag = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    filename = f"{model_name}_{symbol_id}_{timeframe}_{ts_tag}.joblib"
+    suffix = "_tuned" if tune else ""
+    filename = f"{model_name}{suffix}_{symbol_id}_{timeframe}_{ts_tag}.joblib"
     artifact_path = str(ARTIFACT_DIR / filename)
     joblib.dump({"model": clf, "feature_keys": FEATURE_KEYS}, artifact_path)
 
@@ -211,6 +278,7 @@ def train_regime_model(
             "n_train": len(y_train),
             "n_test": len(y_test),
             "classification_report": report,
+            **tuning_info,
         },
     )
     db.add(meta)
@@ -229,6 +297,7 @@ def train_regime_model(
         "n_train": len(y_train),
         "n_test": len(y_test),
         "label_distribution": label_dist,
+        **tuning_info,
     }
 
 

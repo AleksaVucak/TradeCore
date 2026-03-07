@@ -1,6 +1,7 @@
-"""Pydantic schemas for regime labels (Phase 9.3) and performance (Phase 9.5)."""
+"""Pydantic schemas for regime labels (9.3), performance (9.5), and models (9.6)."""
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -46,3 +47,31 @@ class RegimePerformanceResponse(BaseModel):
     total_bars: int
     total_trades_matched: int
     regimes: list[RegimePerformanceItem]
+
+
+class ModelInfoOut(BaseModel):
+    """Summary of a trained ML model (Phase 9.6)."""
+
+    id: int
+    name: str
+    symbol_id: int | None = None
+    timeframe: str | None = None
+    training_start: datetime | None = None
+    training_end: datetime | None = None
+    created_at: datetime
+    accuracy: float | None = None
+    n_train: int | None = None
+    n_test: int | None = None
+    tuned: bool = False
+    best_params: dict[str, Any] | None = None
+    cv_best_score: float | None = None
+    cv_folds: int | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class ModelListResponse(BaseModel):
+    """Response listing trained models (Phase 9.6)."""
+
+    models: list[ModelInfoOut]

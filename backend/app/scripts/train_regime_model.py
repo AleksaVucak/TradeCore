@@ -1,10 +1,15 @@
 """
-CLI script to train the regime classification model (Phase 9.2).
+CLI script to train the regime classification model (Phase 9.2 + 9.6 tuning).
 
 Usage inside the backend container:
     python -m app.scripts.train_regime_model --symbol-id 1 --timeframe 1h
 
-Or with date filters:
+With hyperparameter tuning (Phase 9.6):
+    python -m app.scripts.train_regime_model \
+        --symbol-id 1 --timeframe 1h --tune \
+        --tune-n-iter 30 --tune-cv 5
+
+With date filters:
     python -m app.scripts.train_regime_model \
         --symbol-id 1 --timeframe 1h \
         --start 2026-01-01T00:00:00Z --end 2026-03-01T00:00:00Z
@@ -36,9 +41,12 @@ def main() -> None:
     parser.add_argument("--label-window", type=int, default=20, help="Forward-looking label window")
     parser.add_argument("--trend-threshold", type=float, default=0.03, help="Trend threshold")
     parser.add_argument("--vol-threshold-pct", type=float, default=75.0, help="Volatility percentile threshold")
-    parser.add_argument("--n-estimators", type=int, default=200, help="Number of trees")
-    parser.add_argument("--max-depth", type=int, default=12, help="Max tree depth (0 = unlimited)")
+    parser.add_argument("--n-estimators", type=int, default=200, help="Number of trees (no-tune mode)")
+    parser.add_argument("--max-depth", type=int, default=12, help="Max tree depth, 0=unlimited (no-tune mode)")
     parser.add_argument("--model-name", type=str, default="regime_rf", help="Model name prefix")
+    parser.add_argument("--tune", action="store_true", help="Enable hyperparameter tuning (Phase 9.6)")
+    parser.add_argument("--tune-n-iter", type=int, default=30, help="Number of random search iterations")
+    parser.add_argument("--tune-cv", type=int, default=5, help="Number of CV folds")
     args = parser.parse_args()
 
     from app.db.session import SessionLocal
@@ -50,8 +58,10 @@ def main() -> None:
 
     db = SessionLocal()
     try:
+        mode_str = "with hyperparameter tuning" if args.tune else "with fixed params"
         print(f"Training regime model for symbol_id={args.symbol_id}, "
-              f"timeframe={args.timeframe} ...")
+              f"timeframe={args.timeframe} ({mode_str}) ...")
+
         result = train_regime_model(
             db,
             symbol_id=args.symbol_id,
@@ -64,7 +74,11 @@ def main() -> None:
             n_estimators=args.n_estimators,
             max_depth=max_depth,
             model_name=args.model_name,
+            tune=args.tune,
+            tune_n_iter=args.tune_n_iter,
+            tune_cv=args.tune_cv,
         )
+
         print("\n=== Training Complete ===")
         print(f"Model ID    : {result['model_id']}")
         print(f"Artifact    : {result['artifact_path']}")
@@ -72,6 +86,16 @@ def main() -> None:
         print(f"Train size  : {result['n_train']}")
         print(f"Test size   : {result['n_test']}")
         print(f"Label dist  : {json.dumps(result['label_distribution'])}")
+
+        if result.get("tuned"):
+            print(f"\n--- Tuning Results ---")
+            print(f"CV folds    : {result.get('cv_folds')}")
+            print(f"Iterations  : {result.get('n_iter')}")
+            print(f"CV score    : {result.get('cv_best_score', 0):.4f} (f1_weighted)")
+            print(f"Best params : {json.dumps(result.get('best_params', {}), indent=2)}")
+        else:
+            print(f"\nParams      : {json.dumps(result.get('best_params', {}))}")
+
         print("\nClassification report:")
         report = result["classification_report"]
         for cls_name in sorted(set(report.keys()) - {"accuracy", "macro avg", "weighted avg"}):

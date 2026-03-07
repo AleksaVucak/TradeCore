@@ -14,6 +14,7 @@ import {
   regimesApi,
   type BacktestRunDetail,
   type CandleResponse,
+  type ModelInfoOut,
   type RegimeLabelOut,
   type RegimePerformanceResponse,
 } from "@/lib/api/endpoints";
@@ -143,6 +144,7 @@ export function RunDetailClient({ runId }: { runId: string }) {
   const [candlesLoading, setCandlesLoading] = useState(false);
   const [regimeLabels, setRegimeLabels] = useState<RegimeLabelOut[]>([]);
   const [regimePerformance, setRegimePerformance] = useState<RegimePerformanceResponse | null>(null);
+  const [modelInfo, setModelInfo] = useState<ModelInfoOut | null>(null);
 
   useEffect(() => {
     if (!run || run.status !== "completed") return;
@@ -190,6 +192,16 @@ export function RunDetailClient({ runId }: { runId: string }) {
       .getPerformanceForRun(token, runId)
       .then((data) => setRegimePerformance(data))
       .catch(() => setRegimePerformance(null));
+  }, [run, runId]);
+
+  useEffect(() => {
+    if (!run || run.status !== "completed") return;
+    const token = getToken();
+    if (!token) return;
+    regimesApi
+      .getModelForRun(token, runId)
+      .then((data) => setModelInfo(data))
+      .catch(() => setModelInfo(null));
   }, [run, runId]);
 
   const regimeBands: RegimeBand[] = useMemo(() => {
@@ -584,6 +596,93 @@ export function RunDetailClient({ runId }: { runId: string }) {
                 );
               })}
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Model info card */}
+      {run.status === "completed" && modelInfo && (
+        <Card className="mt-6">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Regime model info</CardTitle>
+            <CardDescription>
+              ML model used for regime classification on this run
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-4 text-sm">
+              <div>
+                <p className="text-muted-foreground text-xs font-medium mb-0.5">Model</p>
+                <p className="font-medium">{modelInfo.name} <span className="text-muted-foreground text-xs">#{modelInfo.id}</span></p>
+              </div>
+              {modelInfo.accuracy != null && (
+                <div>
+                  <p className="text-muted-foreground text-xs font-medium mb-0.5">Accuracy</p>
+                  <p className="font-semibold tabular-nums">{(modelInfo.accuracy * 100).toFixed(1)}%</p>
+                </div>
+              )}
+              {modelInfo.tuned && modelInfo.cv_best_score != null && (
+                <div>
+                  <p className="text-muted-foreground text-xs font-medium mb-0.5">CV score (F1)</p>
+                  <p className="font-semibold tabular-nums">{(modelInfo.cv_best_score * 100).toFixed(1)}%</p>
+                </div>
+              )}
+              {modelInfo.tuned && modelInfo.cv_folds != null && (
+                <div>
+                  <p className="text-muted-foreground text-xs font-medium mb-0.5">CV folds</p>
+                  <p className="tabular-nums">{modelInfo.cv_folds}</p>
+                </div>
+              )}
+              {modelInfo.n_train != null && (
+                <div>
+                  <p className="text-muted-foreground text-xs font-medium mb-0.5">Train samples</p>
+                  <p className="tabular-nums">{modelInfo.n_train.toLocaleString()}</p>
+                </div>
+              )}
+              {modelInfo.n_test != null && (
+                <div>
+                  <p className="text-muted-foreground text-xs font-medium mb-0.5">Test samples</p>
+                  <p className="tabular-nums">{modelInfo.n_test.toLocaleString()}</p>
+                </div>
+              )}
+              <div>
+                <p className="text-muted-foreground text-xs font-medium mb-0.5">Tuned</p>
+                <p>
+                  {modelInfo.tuned ? (
+                    <span className="inline-flex items-center rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 px-2 py-0.5 text-xs font-medium">
+                      Yes
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center rounded-md bg-muted text-muted-foreground px-2 py-0.5 text-xs font-medium">
+                      No
+                    </span>
+                  )}
+                </p>
+              </div>
+              {modelInfo.training_start && modelInfo.training_end && (
+                <div>
+                  <p className="text-muted-foreground text-xs font-medium mb-0.5">Training window</p>
+                  <p className="text-xs">{formatDateRange(modelInfo.training_start, modelInfo.training_end)}</p>
+                </div>
+              )}
+            </div>
+            {modelInfo.best_params && Object.keys(modelInfo.best_params).length > 0 && (
+              <div className="mt-4 pt-4 border-t border-border">
+                <p className="text-muted-foreground text-xs font-medium mb-2">
+                  {modelInfo.tuned ? "Best hyperparameters" : "Model parameters"}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {Object.entries(modelInfo.best_params).map(([k, v]) => (
+                    <span
+                      key={k}
+                      className="inline-flex items-center rounded-md bg-muted px-2.5 py-1 text-xs font-mono"
+                    >
+                      {k}={String(v ?? "None")}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
