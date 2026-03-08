@@ -685,8 +685,10 @@ export default function CompareRunsPage() {
   useEffect(() => {
     const token = getToken();
     if (!token) {
-      setError("Please log in to compare runs.");
-      setLoading(false);
+      queueMicrotask(() => {
+        setError("Please log in to compare runs.");
+        setLoading(false);
+      });
       return;
     }
     backtestsApi

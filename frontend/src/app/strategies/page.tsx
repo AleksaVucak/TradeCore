@@ -21,8 +21,10 @@ export default function StrategiesPage() {
   useEffect(() => {
     const token = getToken();
     if (!token) {
-      setError("Please log in to view strategies.");
-      setLoading(false);
+      queueMicrotask(() => {
+        setError("Please log in to view strategies.");
+        setLoading(false);
+      });
       return;
     }
     setLoading(true);

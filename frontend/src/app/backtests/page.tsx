@@ -54,8 +54,10 @@ export default function BacktestsPage() {
   useEffect(() => {
     const token = getToken();
     if (!token) {
-      setError("Please log in to view run history.");
-      setLoading(false);
+      queueMicrotask(() => {
+        setError("Please log in to view run history.");
+        setLoading(false);
+      });
       return;
     }
     backtestsApi

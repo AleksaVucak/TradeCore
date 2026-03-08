@@ -25,7 +25,7 @@ export function Header() {
   }
 
   useEffect(() => {
-    checkAuth();
+    queueMicrotask(() => checkAuth());
   }, [pathname]);
 
   useEffect(() => {

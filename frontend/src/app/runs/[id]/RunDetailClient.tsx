@@ -93,8 +93,10 @@ export function RunDetailClient({ runId }: { runId: string }) {
   useEffect(() => {
     const token = getToken();
     if (!token) {
-      setError("Please log in to view this run.");
-      setLoading(false);
+      queueMicrotask(() => {
+        setError("Please log in to view this run.");
+        setLoading(false);
+      });
       return;
     }
     backtestsApi
@@ -110,9 +112,10 @@ export function RunDetailClient({ runId }: { runId: string }) {
       .finally(() => setLoading(false));
   }, [runId]);
 
+  const equityCurve = run?.equity_curve;
   const chartData = useMemo(() => {
-    if (!run?.equity_curve || run.equity_curve.length === 0) return [];
-    return [...run.equity_curve]
+    if (!equityCurve || equityCurve.length === 0) return [];
+    return [...equityCurve]
       .sort(
         (a, b) =>
           new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
@@ -121,7 +124,7 @@ export function RunDetailClient({ runId }: { runId: string }) {
         timestamp: p.timestamp,
         equity_value: p.equity_value,
       }));
-  }, [run?.equity_curve]);
+  }, [equityCurve]);
 
   const hasEquityData = chartData.length > 0;
 
@@ -151,7 +154,7 @@ export function RunDetailClient({ runId }: { runId: string }) {
     if (!run || run.status !== "completed") return;
     const token = getToken();
     if (!token) return;
-    setCandlesLoading(true);
+    queueMicrotask(() => setCandlesLoading(true));
     marketDataApi
       .candles(token, {
         symbol_id: run.symbol_id,
@@ -222,14 +225,15 @@ export function RunDetailClient({ runId }: { runId: string }) {
     return { counts, total };
   }, [regimeLabels]);
 
+  const trades = run?.trades;
   const tradeMarkers: TradeMarker[] = useMemo(() => {
-    if (!run?.trades || run.trades.length === 0) return [];
-    return run.trades.map((t) => ({
+    if (!trades || trades.length === 0) return [];
+    return trades.map((t) => ({
       timestamp: t.timestamp,
       side: t.side as "buy" | "sell",
       price: t.price,
     }));
-  }, [run?.trades]);
+  }, [trades]);
 
   if (loading) {
     return (

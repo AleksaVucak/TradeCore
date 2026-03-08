@@ -46,7 +46,7 @@ export default function Home() {
   }
 
   useEffect(() => {
-    fetchData();
+    queueMicrotask(() => fetchData());
   }, []);
 
   useEffect(() => {
