@@ -79,12 +79,22 @@ export default function BacktestsPage() {
         >
           ← Dashboard
         </Link>
-        <h1 className="text-xl font-semibold tracking-tight mt-2">
-          Run history
-        </h1>
-        <p className="text-muted-foreground text-sm mt-1">
-          Table of backtest runs: status, symbol, strategy, return, drawdown
-        </p>
+        <div className="flex items-center justify-between mt-2">
+          <div>
+            <h1 className="text-xl font-semibold tracking-tight">
+              Run history
+            </h1>
+            <p className="text-muted-foreground text-sm mt-1">
+              Table of backtest runs: status, symbol, strategy, return, drawdown
+            </p>
+          </div>
+          <Link
+            href="/runs/compare"
+            className="inline-flex items-center justify-center rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
+          >
+            Compare runs
+          </Link>
+        </div>
       </header>
       <main className="container mx-auto max-w-5xl px-6 py-8">
         {error && (

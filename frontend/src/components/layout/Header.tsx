@@ -70,6 +70,12 @@ export function Header() {
               Backtests
             </Link>
             <Link
+              href="/runs/compare"
+              className={pathname === "/runs/compare" ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground"}
+            >
+              Compare
+            </Link>
+            <Link
               href="/market-data"
               className={pathname === "/market-data" ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground"}
             >
