@@ -57,21 +57,87 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function RunSummaryCard({
+type MetricDef = {
+  key: string;
+  label: string;
+  format: (v: number) => string;
+  higherIsBetter: boolean;
+};
+
+const METRIC_DEFS: MetricDef[] = [
+  {
+    key: "total_return_pct",
+    label: "Total return",
+    format: (v) => formatPct(v),
+    higherIsBetter: true,
+  },
+  {
+    key: "max_drawdown_pct",
+    label: "Max drawdown",
+    format: (v) => `${v.toFixed(2)}%`,
+    higherIsBetter: false,
+  },
+  {
+    key: "num_trades",
+    label: "Trades",
+    format: (v) => String(Math.round(v)),
+    higherIsBetter: true,
+  },
+  {
+    key: "win_rate",
+    label: "Win rate",
+    format: (v) => `${v.toFixed(1)}%`,
+    higherIsBetter: true,
+  },
+  {
+    key: "sharpe_ratio",
+    label: "Sharpe ratio",
+    format: (v) => v.toFixed(2),
+    higherIsBetter: true,
+  },
+  {
+    key: "profit_factor",
+    label: "Profit factor",
+    format: (v) => v.toFixed(2),
+    higherIsBetter: true,
+  },
+  {
+    key: "final_equity",
+    label: "Final equity",
+    format: (v) => formatNumber(v),
+    higherIsBetter: true,
+  },
+  {
+    key: "annualized_return_pct",
+    label: "Ann. return",
+    format: (v) => formatPct(v),
+    higherIsBetter: true,
+  },
+];
+
+function getWinner(
+  a: number | undefined,
+  b: number | undefined,
+  higherIsBetter: boolean,
+): "a" | "b" | "tie" | "none" {
+  if (a == null && b == null) return "none";
+  if (a == null) return "b";
+  if (b == null) return "a";
+  if (a === b) return "tie";
+  if (higherIsBetter) return a > b ? "a" : "b";
+  return a < b ? "a" : "b";
+}
+
+function RunHeaderCard({
   label,
   run,
 }: {
   label: string;
   run: BacktestRunDetail;
 }) {
-  const metrics =
-    run.status === "completed" && run.metrics
-      ? (run.metrics as Record<string, number>)
-      : null;
-
   return (
     <Card className="flex-1 min-w-0">
-      <CardHeader className="pb-2">
+      <CardHeader className="pb-3">
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             {label}
@@ -90,91 +156,149 @@ function RunSummaryCard({
           {run.timeframe} · {formatDateRange(run.start_time, run.end_time)}
         </CardDescription>
       </CardHeader>
-      <CardContent>
-        {metrics ? (
-          <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
-            {typeof metrics.total_return_pct === "number" && (
-              <div>
-                <p className="text-muted-foreground text-xs">Total return</p>
-                <p
-                  className={`font-semibold tabular-nums ${
-                    metrics.total_return_pct >= 0
-                      ? "text-emerald-600 dark:text-emerald-400"
-                      : "text-destructive"
-                  }`}
+    </Card>
+  );
+}
+
+function MetricsComparisonTable({
+  runA,
+  runB,
+}: {
+  runA: BacktestRunDetail;
+  runB: BacktestRunDetail;
+}) {
+  const metricsA =
+    runA.status === "completed" && runA.metrics
+      ? (runA.metrics as Record<string, number>)
+      : null;
+  const metricsB =
+    runB.status === "completed" && runB.metrics
+      ? (runB.metrics as Record<string, number>)
+      : null;
+
+  if (!metricsA && !metricsB) {
+    return (
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle className="text-base">Metrics comparison</CardTitle>
+          <CardDescription>
+            Neither run has metrics available.
+          </CardDescription>
+        </CardHeader>
+      </Card>
+    );
+  }
+
+  const availableMetrics = METRIC_DEFS.filter(
+    (m) =>
+      (metricsA && typeof metricsA[m.key] === "number") ||
+      (metricsB && typeof metricsB[m.key] === "number"),
+  );
+
+  const winsA = availableMetrics.filter((m) => {
+    const valA = metricsA?.[m.key];
+    const valB = metricsB?.[m.key];
+    return getWinner(valA, valB, m.higherIsBetter) === "a";
+  }).length;
+
+  const winsB = availableMetrics.filter((m) => {
+    const valA = metricsA?.[m.key];
+    const valB = metricsB?.[m.key];
+    return getWinner(valA, valB, m.higherIsBetter) === "b";
+  }).length;
+
+  return (
+    <Card className="mt-6">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">Metrics comparison</CardTitle>
+        <CardDescription>
+          Side-by-side metrics with better value highlighted
+          <span className="ml-2 text-xs">
+            (Run A wins {winsA} · Run B wins {winsB})
+          </span>
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border">
+              <th className="text-left py-3 px-2 font-medium">Metric</th>
+              <th className="text-right py-3 px-2 font-medium">
+                <span className="inline-flex items-center gap-1.5">
+                  Run A
+                </span>
+              </th>
+              <th className="text-right py-3 px-2 font-medium">
+                <span className="inline-flex items-center gap-1.5">
+                  Run B
+                </span>
+              </th>
+              <th className="text-center py-3 px-2 font-medium w-20">
+                Better
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {availableMetrics.map((m) => {
+              const valA = metricsA?.[m.key];
+              const valB = metricsB?.[m.key];
+              const winner = getWinner(valA, valB, m.higherIsBetter);
+
+              const cellA =
+                typeof valA === "number" ? m.format(valA) : "—";
+              const cellB =
+                typeof valB === "number" ? m.format(valB) : "—";
+
+              const winClassA =
+                winner === "a"
+                  ? "text-emerald-600 dark:text-emerald-400 font-semibold"
+                  : "";
+              const winClassB =
+                winner === "b"
+                  ? "text-emerald-600 dark:text-emerald-400 font-semibold"
+                  : "";
+
+              return (
+                <tr
+                  key={m.key}
+                  className="border-b border-border/80 hover:bg-muted/50"
                 >
-                  {formatPct(metrics.total_return_pct)}
-                </p>
-              </div>
-            )}
-            {typeof metrics.max_drawdown_pct === "number" && (
-              <div>
-                <p className="text-muted-foreground text-xs">Max drawdown</p>
-                <p className="font-semibold tabular-nums text-muted-foreground">
-                  {metrics.max_drawdown_pct.toFixed(2)}%
-                </p>
-              </div>
-            )}
-            {typeof metrics.num_trades === "number" && (
-              <div>
-                <p className="text-muted-foreground text-xs">Trades</p>
-                <p className="font-semibold tabular-nums">
-                  {metrics.num_trades}
-                </p>
-              </div>
-            )}
-            {typeof metrics.win_rate === "number" && (
-              <div>
-                <p className="text-muted-foreground text-xs">Win rate</p>
-                <p className="font-semibold tabular-nums">
-                  {metrics.win_rate.toFixed(1)}%
-                </p>
-              </div>
-            )}
-            {typeof metrics.sharpe_ratio === "number" && (
-              <div>
-                <p className="text-muted-foreground text-xs">Sharpe ratio</p>
-                <p className="font-semibold tabular-nums">
-                  {metrics.sharpe_ratio.toFixed(2)}
-                </p>
-              </div>
-            )}
-            {typeof metrics.profit_factor === "number" && (
-              <div>
-                <p className="text-muted-foreground text-xs">Profit factor</p>
-                <p className="font-semibold tabular-nums">
-                  {metrics.profit_factor.toFixed(2)}
-                </p>
-              </div>
-            )}
-            {typeof metrics.final_equity === "number" && (
-              <div>
-                <p className="text-muted-foreground text-xs">Final equity</p>
-                <p className="font-semibold tabular-nums">
-                  {formatNumber(metrics.final_equity)}
-                </p>
-              </div>
-            )}
-            {typeof metrics.annualized_return_pct === "number" && (
-              <div>
-                <p className="text-muted-foreground text-xs">Ann. return</p>
-                <p className="font-semibold tabular-nums text-muted-foreground">
-                  {formatPct(metrics.annualized_return_pct)}
-                </p>
-              </div>
-            )}
-          </div>
-        ) : run.status === "completed" ? (
-          <p className="text-muted-foreground text-sm">No metrics available.</p>
-        ) : run.status === "failed" ? (
-          <p className="text-destructive text-sm">
-            Run failed{run.error_message ? `: ${run.error_message}` : "."}
-          </p>
-        ) : (
-          <p className="text-muted-foreground text-sm">
-            Run is {run.status}. Metrics available after completion.
-          </p>
-        )}
+                  <td className="py-3 px-2 font-medium">{m.label}</td>
+                  <td
+                    className={`py-3 px-2 text-right tabular-nums ${winClassA}`}
+                  >
+                    {cellA}
+                  </td>
+                  <td
+                    className={`py-3 px-2 text-right tabular-nums ${winClassB}`}
+                  >
+                    {cellB}
+                  </td>
+                  <td className="py-3 px-2 text-center">
+                    {winner === "a" && (
+                      <span className="inline-flex items-center rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 px-2 py-0.5 text-xs font-medium">
+                        A
+                      </span>
+                    )}
+                    {winner === "b" && (
+                      <span className="inline-flex items-center rounded-md bg-blue-500/15 text-blue-700 dark:text-blue-400 px-2 py-0.5 text-xs font-medium">
+                        B
+                      </span>
+                    )}
+                    {winner === "tie" && (
+                      <span className="inline-flex items-center rounded-md bg-muted text-muted-foreground px-2 py-0.5 text-xs font-medium">
+                        Tie
+                      </span>
+                    )}
+                    {winner === "none" && (
+                      <span className="text-muted-foreground text-xs">—</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </CardContent>
     </Card>
   );
@@ -370,10 +494,13 @@ export default function CompareRunsPage() {
             )}
 
             {runA && runB && !loadingA && !loadingB && (
-              <div className="mt-6 flex flex-col md:flex-row gap-4">
-                <RunSummaryCard label="Run A" run={runA} />
-                <RunSummaryCard label="Run B" run={runB} />
-              </div>
+              <>
+                <div className="mt-6 flex flex-col md:flex-row gap-4">
+                  <RunHeaderCard label="Run A" run={runA} />
+                  <RunHeaderCard label="Run B" run={runB} />
+                </div>
+                <MetricsComparisonTable runA={runA} runB={runB} />
+              </>
             )}
           </>
         )}
