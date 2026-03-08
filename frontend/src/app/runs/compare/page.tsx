@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import {
   Card,
   CardContent,
@@ -14,8 +14,21 @@ import {
   backtestsApi,
   type BacktestRunDetail,
   type BacktestRunListItem,
+  type EquityPointOut,
 } from "@/lib/api/endpoints";
 import { getToken } from "@/lib/auth";
+import {
+  Area,
+  ComposedChart,
+  Line,
+  LineChart,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+} from "recharts";
 
 function formatPct(value: number | null | undefined): string {
   if (value == null) return "—";
@@ -304,6 +317,356 @@ function MetricsComparisonTable({
   );
 }
 
+type EquityChartPoint = {
+  timestamp: string;
+  equity_a?: number;
+  equity_b?: number;
+};
+
+type DrawdownChartPoint = {
+  timestamp: string;
+  drawdown_a?: number;
+  drawdown_b?: number;
+};
+
+function sortEquity(curve: EquityPointOut[]): EquityPointOut[] {
+  return [...curve].sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+  );
+}
+
+function computeDrawdownSeries(
+  sorted: EquityPointOut[],
+): { timestamp: string; drawdown: number }[] {
+  let peak = -Infinity;
+  return sorted.map((p) => {
+    if (p.equity_value > peak) peak = p.equity_value;
+    const dd = peak > 0 ? ((peak - p.equity_value) / peak) * 100 : 0;
+    return { timestamp: p.timestamp, drawdown: Math.round(dd * 100) / 100 };
+  });
+}
+
+function mergeEquitySeries(
+  curveA: EquityPointOut[],
+  curveB: EquityPointOut[],
+): EquityChartPoint[] {
+  const mapA = new Map<number, number>();
+  for (const p of curveA) mapA.set(new Date(p.timestamp).getTime(), p.equity_value);
+  const mapB = new Map<number, number>();
+  for (const p of curveB) mapB.set(new Date(p.timestamp).getTime(), p.equity_value);
+
+  const allTimes = new Set([...mapA.keys(), ...mapB.keys()]);
+  const sorted = [...allTimes].sort((a, b) => a - b);
+
+  return sorted.map((t) => ({
+    timestamp: new Date(t).toISOString(),
+    equity_a: mapA.get(t),
+    equity_b: mapB.get(t),
+  }));
+}
+
+function mergeDrawdownSeries(
+  ddA: { timestamp: string; drawdown: number }[],
+  ddB: { timestamp: string; drawdown: number }[],
+): DrawdownChartPoint[] {
+  const mapA = new Map<number, number>();
+  for (const p of ddA) mapA.set(new Date(p.timestamp).getTime(), p.drawdown);
+  const mapB = new Map<number, number>();
+  for (const p of ddB) mapB.set(new Date(p.timestamp).getTime(), p.drawdown);
+
+  const allTimes = new Set([...mapA.keys(), ...mapB.keys()]);
+  const sorted = [...allTimes].sort((a, b) => a - b);
+
+  return sorted.map((t) => ({
+    timestamp: new Date(t).toISOString(),
+    drawdown_a: mapA.get(t),
+    drawdown_b: mapB.get(t),
+  }));
+}
+
+function ensureMinimalCurve(
+  run: BacktestRunDetail,
+): EquityPointOut[] {
+  const curve = run.equity_curve ?? [];
+  if (curve.length > 0) return curve;
+  if (run.status !== "completed") return [];
+  const initialValue =
+    (run.metrics as Record<string, number> | null)?.final_equity ?? 10_000;
+  return [
+    { timestamp: run.start_time, equity_value: initialValue },
+    { timestamp: run.end_time, equity_value: initialValue },
+  ];
+}
+
+const CHART_STYLE = {
+  grid: { strokeDasharray: "3 3", stroke: "hsl(var(--border))", opacity: 0.4 },
+  xTick: { fill: "hsl(var(--muted-foreground))", fontSize: 11 },
+  xAxis: { stroke: "hsl(var(--border))" },
+  yTick: { fill: "hsl(var(--muted-foreground))", fontSize: 11 },
+  tooltip: {
+    backgroundColor: "hsl(var(--card))",
+    border: "1px solid hsl(var(--border))",
+    borderRadius: "var(--radius)",
+    fontSize: 12,
+  },
+};
+
+function EquityComparisonChart({
+  runA,
+  runB,
+}: {
+  runA: BacktestRunDetail;
+  runB: BacktestRunDetail;
+}) {
+  const data = useMemo(() => {
+    const sortedA = sortEquity(ensureMinimalCurve(runA));
+    const sortedB = sortEquity(ensureMinimalCurve(runB));
+    return mergeEquitySeries(sortedA, sortedB);
+  }, [runA, runB]);
+
+  if (data.length === 0) {
+    return (
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle className="text-base">Equity comparison</CardTitle>
+          <CardDescription>
+            No equity data available for either run.
+          </CardDescription>
+        </CardHeader>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="mt-6">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">Equity comparison</CardTitle>
+        <CardDescription>
+          Absolute account value over time — Run A (green) vs Run B (blue)
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="h-[340px] w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart
+              data={data}
+              margin={{ top: 10, right: 10, left: 28, bottom: 5 }}
+            >
+              <CartesianGrid {...CHART_STYLE.grid} />
+              <XAxis
+                dataKey="timestamp"
+                tickFormatter={(ts: string) =>
+                  new Date(ts).toLocaleDateString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                  })
+                }
+                tick={CHART_STYLE.xTick}
+                axisLine={CHART_STYLE.xAxis}
+                tickLine={CHART_STYLE.xAxis}
+              />
+              <YAxis
+                tickFormatter={(v: number) =>
+                  v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(v)
+                }
+                tick={CHART_STYLE.yTick}
+                axisLine={CHART_STYLE.xAxis}
+                tickLine={CHART_STYLE.xAxis}
+                domain={["auto", "auto"]}
+                label={{
+                  value: "Equity ($)",
+                  angle: -90,
+                  position: "insideLeft",
+                  style: { fill: "hsl(var(--muted-foreground))", fontSize: 11 },
+                }}
+              />
+              <Tooltip
+                contentStyle={CHART_STYLE.tooltip}
+                labelStyle={{ color: "hsl(var(--foreground))" }}
+                labelFormatter={(label: ReactNode) =>
+                  new Date(String(label)).toLocaleString(undefined, {
+                    dateStyle: "medium",
+                    timeStyle: "short",
+                  })
+                }
+                formatter={(
+                  value: number | undefined,
+                  name: string | undefined,
+                ) => [
+                  value != null
+                    ? value.toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })
+                    : "—",
+                  name === "equity_a" ? "Run A" : "Run B",
+                ]}
+              />
+              <Legend
+                formatter={(value: string) =>
+                  value === "equity_a" ? "Run A" : "Run B"
+                }
+              />
+              <Area
+                type="monotone"
+                dataKey="equity_a"
+                fill="#22c55e"
+                fillOpacity={0.12}
+                stroke="none"
+                legendType="none"
+              />
+              <Area
+                type="monotone"
+                dataKey="equity_b"
+                fill="#3b82f6"
+                fillOpacity={0.12}
+                stroke="none"
+                legendType="none"
+              />
+              <Line
+                type="monotone"
+                dataKey="equity_a"
+                stroke="#22c55e"
+                strokeWidth={2}
+                dot={false}
+                connectNulls
+                activeDot={{ r: 3 }}
+              />
+              <Line
+                type="monotone"
+                dataKey="equity_b"
+                stroke="#3b82f6"
+                strokeWidth={2}
+                dot={false}
+                connectNulls
+                activeDot={{ r: 3 }}
+              />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function DrawdownComparisonChart({
+  runA,
+  runB,
+}: {
+  runA: BacktestRunDetail;
+  runB: BacktestRunDetail;
+}) {
+  const data = useMemo(() => {
+    const sortedA = sortEquity(ensureMinimalCurve(runA));
+    const sortedB = sortEquity(ensureMinimalCurve(runB));
+    const ddA = computeDrawdownSeries(sortedA);
+    const ddB = computeDrawdownSeries(sortedB);
+    return mergeDrawdownSeries(ddA, ddB);
+  }, [runA, runB]);
+
+  if (data.length === 0) {
+    return (
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle className="text-base">Drawdown comparison</CardTitle>
+          <CardDescription>
+            No equity data available to compute drawdown.
+          </CardDescription>
+        </CardHeader>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="mt-6">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">Drawdown comparison</CardTitle>
+        <CardDescription>
+          Peak-to-trough drawdown (%) — Run A (red) vs Run B (orange); lower is better
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="h-[300px] w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart
+              data={data}
+              margin={{ top: 10, right: 10, left: 28, bottom: 5 }}
+            >
+              <CartesianGrid {...CHART_STYLE.grid} />
+              <XAxis
+                dataKey="timestamp"
+                tickFormatter={(ts: string) =>
+                  new Date(ts).toLocaleDateString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                  })
+                }
+                tick={CHART_STYLE.xTick}
+                axisLine={CHART_STYLE.xAxis}
+                tickLine={CHART_STYLE.xAxis}
+              />
+              <YAxis
+                tickFormatter={(v: number) => `${v.toFixed(1)}%`}
+                tick={CHART_STYLE.yTick}
+                axisLine={CHART_STYLE.xAxis}
+                tickLine={CHART_STYLE.xAxis}
+                reversed
+                domain={["auto", 0]}
+                label={{
+                  value: "Drawdown (%)",
+                  angle: -90,
+                  position: "insideLeft",
+                  style: { fill: "hsl(var(--muted-foreground))", fontSize: 11 },
+                }}
+              />
+              <Tooltip
+                contentStyle={CHART_STYLE.tooltip}
+                labelStyle={{ color: "hsl(var(--foreground))" }}
+                labelFormatter={(label: ReactNode) =>
+                  new Date(String(label)).toLocaleString(undefined, {
+                    dateStyle: "medium",
+                    timeStyle: "short",
+                  })
+                }
+                formatter={(
+                  value: number | undefined,
+                  name: string | undefined,
+                ) => [
+                  value != null ? `${value.toFixed(2)}%` : "—",
+                  name === "drawdown_a" ? "Run A" : "Run B",
+                ]}
+              />
+              <Legend
+                formatter={(value: string) =>
+                  value === "drawdown_a" ? "Run A" : "Run B"
+                }
+              />
+              <Line
+                type="monotone"
+                dataKey="drawdown_a"
+                stroke="#ef4444"
+                strokeWidth={2}
+                dot={false}
+                connectNulls
+                activeDot={{ r: 3 }}
+              />
+              <Line
+                type="monotone"
+                dataKey="drawdown_b"
+                stroke="#f97316"
+                strokeWidth={2}
+                dot={false}
+                connectNulls
+                activeDot={{ r: 3 }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function CompareRunsPage() {
   const [runs, setRuns] = useState<BacktestRunListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -500,6 +863,8 @@ export default function CompareRunsPage() {
                   <RunHeaderCard label="Run B" run={runB} />
                 </div>
                 <MetricsComparisonTable runA={runA} runB={runB} />
+                <EquityComparisonChart runA={runA} runB={runB} />
+                <DrawdownComparisonChart runA={runA} runB={runB} />
               </>
             )}
           </>

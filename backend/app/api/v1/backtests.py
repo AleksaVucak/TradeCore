@@ -188,14 +188,28 @@ def get_backtest_equity(
         )
     run = (
         db.query(BacktestRun)
-        .options(joinedload(BacktestRun.equity_snapshots))
+        .options(
+            joinedload(BacktestRun.equity_snapshots),
+            joinedload(BacktestRun.metrics),
+        )
         .get(run.id)
     )
     equity_snapshots = sorted(run.equity_snapshots, key=lambda s: s.timestamp)
-    return [
-        EquityPointOut(timestamp=s.timestamp, equity_value=s.equity_value)
-        for s in equity_snapshots
-    ]
+    if equity_snapshots:
+        return [
+            EquityPointOut(timestamp=s.timestamp, equity_value=s.equity_value)
+            for s in equity_snapshots
+        ]
+    # Completed run with no snapshots: return minimal flat curve
+    if run.status == "completed":
+        initial_value = 10_000.0
+        if run.metrics and isinstance(run.metrics.metrics, dict):
+            initial_value = float(run.metrics.metrics.get("final_equity", initial_value))
+        return [
+            EquityPointOut(timestamp=run.start_time, equity_value=initial_value),
+            EquityPointOut(timestamp=run.end_time, equity_value=initial_value),
+        ]
+    return []
 
 
 @router.get("/{run_id}/metrics")
@@ -259,6 +273,15 @@ def get_backtest(
         EquityPointOut(timestamp=s.timestamp, equity_value=s.equity_value)
         for s in equity_snapshots
     ]
+    # For completed runs with no equity snapshots (e.g. no trades), return minimal flat curve
+    if run.status == "completed" and not equity_curve:
+        initial_value = 10_000.0
+        if run.metrics and isinstance(run.metrics.metrics, dict):
+            initial_value = float(run.metrics.metrics.get("final_equity", initial_value))
+        equity_curve = [
+            EquityPointOut(timestamp=run.start_time, equity_value=initial_value),
+            EquityPointOut(timestamp=run.end_time, equity_value=initial_value),
+        ]
     metrics = run.metrics.metrics if run.metrics else None
     return BacktestRunDetail(
         id=run.id,
