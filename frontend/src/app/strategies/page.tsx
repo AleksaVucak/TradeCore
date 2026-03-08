@@ -9,6 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { strategiesApi, type StrategyListItem } from "@/lib/api/endpoints";
 import { getToken } from "@/lib/auth";
 
@@ -62,9 +63,20 @@ export default function StrategiesPage() {
         </div>
 
         {error && (
-          <p className="text-sm text-destructive">
-            {error}
-          </p>
+          <Card className="border-destructive/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base text-destructive">Something went wrong</CardTitle>
+              <CardDescription>{error}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <button
+                onClick={() => window.location.reload()}
+                className="text-sm font-medium text-primary underline-offset-4 hover:underline"
+              >
+                Try again
+              </button>
+            </CardContent>
+          </Card>
         )}
 
         <Card>
@@ -72,15 +84,24 @@ export default function StrategiesPage() {
             <CardTitle>Strategies</CardTitle>
             <CardDescription>
               {loading
-                ? "Loading your strategies…"
+                ? "Loading…"
                 : strategies.length === 0
                 ? "No strategies yet. Create your first strategy to get started."
-                : "List of your strategies."}
+                : `${strategies.length} strateg${strategies.length === 1 ? "y" : "ies"} found.`}
             </CardDescription>
           </CardHeader>
           <CardContent>
             {loading ? (
-              <p className="text-sm text-muted-foreground">Loading…</p>
+              <div className="space-y-3">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="flex items-center gap-4">
+                    <Skeleton className="h-4 w-32" />
+                    <Skeleton className="h-5 w-16 rounded-md" />
+                    <Skeleton className="h-4 w-28 hidden sm:block" />
+                    <Skeleton className="h-4 w-20 ml-auto" />
+                  </div>
+                ))}
+              </div>
             ) : strategies.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 No strategies found. Create a strategy to see it listed here.
@@ -92,7 +113,7 @@ export default function StrategiesPage() {
                     <tr>
                       <th className="py-2 text-left font-medium">Name</th>
                       <th className="py-2 text-left font-medium">Type</th>
-                      <th className="py-2 text-left font-medium">Created</th>
+                      <th className="py-2 text-left font-medium hidden sm:table-cell">Created</th>
                       <th className="py-2 text-right font-medium">Actions</th>
                     </tr>
                   </thead>
@@ -110,7 +131,7 @@ export default function StrategiesPage() {
                             {s.strategy_type}
                           </span>
                         </td>
-                        <td className="py-2 pr-4 align-middle text-muted-foreground">
+                        <td className="py-2 pr-4 align-middle text-muted-foreground hidden sm:table-cell">
                           {new Date(s.created_at).toLocaleString()}
                         </td>
                         <td className="py-2 pl-4 align-middle text-right">

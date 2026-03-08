@@ -8,6 +8,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   backtestsApi,
   marketDataApi,
@@ -232,8 +233,32 @@ export function RunDetailClient({ runId }: { runId: string }) {
 
   if (loading) {
     return (
-      <div className="mt-4">
-        <p className="text-muted-foreground">Loading run…</p>
+      <div className="mt-6 space-y-6">
+        <div className="flex flex-wrap items-center gap-3">
+          <Skeleton className="h-7 w-48" />
+          <Skeleton className="h-5 w-20 rounded-md" />
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <Card key={i}>
+              <CardHeader className="pb-2">
+                <Skeleton className="h-3 w-20" />
+              </CardHeader>
+              <CardContent>
+                <Skeleton className="h-6 w-16" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+        <Card>
+          <CardHeader className="pb-2">
+            <Skeleton className="h-5 w-32" />
+            <Skeleton className="h-4 w-48 mt-1" />
+          </CardHeader>
+          <CardContent>
+            <Skeleton className="h-[280px] w-full rounded-md" />
+          </CardContent>
+        </Card>
       </div>
     );
   }

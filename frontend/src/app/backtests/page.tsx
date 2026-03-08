@@ -9,6 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { backtestsApi, type BacktestRunListItem } from "@/lib/api/endpoints";
 import { getToken } from "@/lib/auth";
 
@@ -98,10 +99,40 @@ export default function BacktestsPage() {
       </header>
       <main className="container mx-auto max-w-5xl px-6 py-8">
         {error && (
-          <p className="text-destructive text-sm mb-4">{error}</p>
+          <Card className="mb-6 border-destructive/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base text-destructive">Something went wrong</CardTitle>
+              <CardDescription>{error}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <button
+                onClick={() => window.location.reload()}
+                className="text-sm font-medium text-primary underline-offset-4 hover:underline"
+              >
+                Try again
+              </button>
+            </CardContent>
+          </Card>
         )}
         {loading ? (
-          <p className="text-muted-foreground text-sm">Loading runs…</p>
+          <Card>
+            <CardHeader className="pb-2">
+              <Skeleton className="h-5 w-24" />
+              <Skeleton className="h-4 w-48 mt-1" />
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-4">
+                  <Skeleton className="h-4 w-20" />
+                  <Skeleton className="h-5 w-16 rounded-md" />
+                  <Skeleton className="h-4 w-12" />
+                  <Skeleton className="h-4 w-24 hidden sm:block" />
+                  <Skeleton className="h-4 w-16 ml-auto" />
+                  <Skeleton className="h-4 w-16 hidden sm:block" />
+                </div>
+              ))}
+            </CardContent>
+          </Card>
         ) : runs.length === 0 ? (
           <Card>
             <CardHeader>
@@ -131,22 +162,22 @@ export default function BacktestsPage() {
                     <th className="text-left py-3 px-2 font-medium">
                       Status
                     </th>
-                    <th className="text-left py-3 px-2 font-medium">
+                    <th className="text-left py-3 px-2 font-medium hidden sm:table-cell">
                       Symbol
                     </th>
-                    <th className="text-left py-3 px-2 font-medium">
+                    <th className="text-left py-3 px-2 font-medium hidden md:table-cell">
                       Strategy
                     </th>
                     <th className="text-right py-3 px-2 font-medium">
                       Return
                     </th>
-                    <th className="text-right py-3 px-2 font-medium">
+                    <th className="text-right py-3 px-2 font-medium hidden sm:table-cell">
                       Drawdown
                     </th>
-                    <th className="text-left py-3 px-2 font-medium">
+                    <th className="text-left py-3 px-2 font-medium hidden lg:table-cell">
                       Timeframe
                     </th>
-                    <th className="text-left py-3 px-2 font-medium">
+                    <th className="text-left py-3 px-2 font-medium hidden lg:table-cell">
                       Date range
                     </th>
                   </tr>
@@ -168,22 +199,22 @@ export default function BacktestsPage() {
                       <td className="py-3 px-2">
                         <StatusBadge status={run.status} />
                       </td>
-                      <td className="py-3 px-2 text-muted-foreground">
+                      <td className="py-3 px-2 text-muted-foreground hidden sm:table-cell">
                         {run.symbol_name ?? run.symbol_id}
                       </td>
-                      <td className="py-3 px-2 text-muted-foreground">
+                      <td className="py-3 px-2 text-muted-foreground hidden md:table-cell">
                         {run.strategy_name ?? "—"}
                       </td>
                       <td className="py-3 px-2 text-right tabular-nums">
                         {formatPct(run.total_return_pct)}
                       </td>
-                      <td className="py-3 px-2 text-right tabular-nums text-muted-foreground">
+                      <td className="py-3 px-2 text-right tabular-nums text-muted-foreground hidden sm:table-cell">
                         {formatPct(run.max_drawdown_pct)}
                       </td>
-                      <td className="py-3 px-2 text-muted-foreground">
+                      <td className="py-3 px-2 text-muted-foreground hidden lg:table-cell">
                         {run.timeframe}
                       </td>
-                      <td className="py-3 px-2 text-muted-foreground whitespace-nowrap">
+                      <td className="py-3 px-2 text-muted-foreground whitespace-nowrap hidden lg:table-cell">
                         {formatDateRange(run.start_time, run.end_time)}
                       </td>
                     </tr>

@@ -10,6 +10,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   backtestsApi,
   type BacktestRunDetail,
@@ -751,11 +752,36 @@ export default function CompareRunsPage() {
       </header>
       <main className="container mx-auto max-w-5xl px-6 py-8">
         {error && (
-          <p className="text-destructive text-sm mb-4">{error}</p>
+          <Card className="mb-6 border-destructive/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base text-destructive">Something went wrong</CardTitle>
+              <CardDescription>{error}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <button
+                onClick={() => window.location.reload()}
+                className="text-sm font-medium text-primary underline-offset-4 hover:underline"
+              >
+                Try again
+              </button>
+            </CardContent>
+          </Card>
         )}
 
         {loading ? (
-          <p className="text-muted-foreground text-sm">Loading runs…</p>
+          <Card>
+            <CardHeader className="pb-2">
+              <Skeleton className="h-5 w-28" />
+              <Skeleton className="h-4 w-52 mt-1" />
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col sm:flex-row gap-4 items-end">
+                <Skeleton className="h-10 flex-1" />
+                <Skeleton className="h-10 flex-1" />
+                <Skeleton className="h-10 w-24" />
+              </div>
+            </CardContent>
+          </Card>
         ) : completedRuns.length < 2 ? (
           <Card>
             <CardHeader>
@@ -847,13 +873,57 @@ export default function CompareRunsPage() {
             </Card>
 
             {detailError && (
-              <p className="text-destructive text-sm mt-4">{detailError}</p>
+              <Card className="mt-4 border-destructive/50">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base text-destructive">Failed to load runs</CardTitle>
+                  <CardDescription>{detailError}</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <button
+                    onClick={handleCompare}
+                    className="text-sm font-medium text-primary underline-offset-4 hover:underline"
+                  >
+                    Retry
+                  </button>
+                </CardContent>
+              </Card>
             )}
 
             {(loadingA || loadingB) && (
-              <p className="text-muted-foreground text-sm mt-6">
-                Loading run details…
-              </p>
+              <div className="mt-6 space-y-6">
+                <div className="flex flex-col md:flex-row gap-4">
+                  <Card className="flex-1 min-w-0">
+                    <CardHeader className="pb-3">
+                      <Skeleton className="h-4 w-12" />
+                      <Skeleton className="h-5 w-24 mt-1" />
+                      <Skeleton className="h-4 w-40 mt-1" />
+                    </CardHeader>
+                  </Card>
+                  <Card className="flex-1 min-w-0">
+                    <CardHeader className="pb-3">
+                      <Skeleton className="h-4 w-12" />
+                      <Skeleton className="h-5 w-24 mt-1" />
+                      <Skeleton className="h-4 w-40 mt-1" />
+                    </CardHeader>
+                  </Card>
+                </div>
+                <Card>
+                  <CardHeader className="pb-2">
+                    <Skeleton className="h-5 w-40" />
+                    <Skeleton className="h-4 w-64 mt-1" />
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {Array.from({ length: 6 }).map((_, i) => (
+                      <div key={i} className="flex items-center gap-4">
+                        <Skeleton className="h-4 w-28" />
+                        <Skeleton className="h-4 w-20 ml-auto" />
+                        <Skeleton className="h-4 w-20" />
+                        <Skeleton className="h-5 w-8 rounded-md" />
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              </div>
             )}
 
             {runA && runB && !loadingA && !loadingB && (
