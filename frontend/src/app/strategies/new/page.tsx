@@ -90,7 +90,7 @@ export default function NewStrategyPage() {
         setSubmitting(false);
         return;
       }
-      const created = await strategiesApi.create(token, payload);
+      await strategiesApi.create(token, payload);
       // After creating, go back to strategies list; users can open the detail page from there.
       router.push("/strategies");
       // Alternatively, we could navigate directly to `/strategies/${created.id}` instead.
