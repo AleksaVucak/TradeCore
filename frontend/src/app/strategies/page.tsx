@@ -27,8 +27,6 @@ export default function StrategiesPage() {
       });
       return;
     }
-    setLoading(true);
-    setError(null);
     strategiesApi
       .list(token)
       .then((items) => {
