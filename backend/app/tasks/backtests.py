@@ -1,6 +1,5 @@
 """Celery tasks for running backtests (Phase 6.3 + 6.4)."""
 
-import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -8,6 +7,7 @@ from typing import Any
 from sqlalchemy.orm import joinedload
 
 from app.celery_app import celery_app
+from app.core.logging import get_logger
 from app.db.session import SessionLocal
 from app.models.backtest_run import BacktestRun, BacktestRunStatus
 from app.models.candle import Candle
@@ -23,7 +23,7 @@ from app.services.backtest import (
     run_backtest_rsi_ma,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 ERROR_MESSAGE_MAX_LEN = 1000
 
@@ -157,11 +157,11 @@ def run_backtest_task(
         )
         if not candles_db:
             logger.warning(
-                "No candles found for backtest: symbol_id=%s timeframe=%s start=%s end=%s",
-                symbol_id,
-                timeframe,
-                start_dt,
-                end_dt,
+                "no_candles_found",
+                symbol_id=symbol_id,
+                timeframe=timeframe,
+                start_time=start_dt.isoformat(),
+                end_time=end_dt.isoformat(),
             )
 
         candles_bt = [
@@ -177,11 +177,12 @@ def run_backtest_task(
         ]
 
         logger.info(
-            "Running backtest: strategy_version_id=%s symbol_id=%s timeframe=%s candles=%s",
-            strategy_version_id,
-            symbol_id,
-            timeframe,
-            len(candles_bt),
+            "backtest_started",
+            run_id=run_id,
+            strategy_version_id=strategy_version_id,
+            symbol_id=symbol_id,
+            timeframe=timeframe,
+            num_candles=len(candles_bt),
         )
 
         bt_result = run_backtest_rsi_ma(
@@ -204,11 +205,14 @@ def run_backtest_task(
         }
 
         logger.info(
-            "Backtest completed: strategy_version_id=%s symbol_id=%s timeframe=%s final_equity=%s",
-            strategy_version_id,
-            symbol_id,
-            timeframe,
-            bt_result.final_equity,
+            "backtest_completed",
+            run_id=run_id,
+            strategy_version_id=strategy_version_id,
+            symbol_id=symbol_id,
+            timeframe=timeframe,
+            initial_equity=bt_result.initial_equity,
+            final_equity=bt_result.final_equity,
+            num_trades=int(metrics.get("num_trades", 0)),
         )
 
         if run_uuid:
@@ -222,11 +226,12 @@ def run_backtest_task(
         }
     except Exception as exc:
         logger.exception(
-            "Backtest failed: strategy_version_id=%s symbol_id=%s timeframe=%s error=%s",
-            strategy_version_id,
-            symbol_id,
-            timeframe,
-            exc,
+            "backtest_failed",
+            run_id=run_id,
+            strategy_version_id=strategy_version_id,
+            symbol_id=symbol_id,
+            timeframe=timeframe,
+            error=str(exc),
         )
         if run_uuid:
             db.rollback()

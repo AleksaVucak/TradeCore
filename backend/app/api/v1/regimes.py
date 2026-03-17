@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from app.core.logging import get_logger
 from app.dependencies import get_current_user_id, get_db
 from app.models.backtest_run import BacktestRun
 from app.models.ml_model_metadata import MLModelMetadata
@@ -21,6 +22,8 @@ from app.schemas.regime import (
 )
 from app.services.ml.inference import get_latest_model
 from app.services.ml.regime_performance import compute_regime_performance
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 

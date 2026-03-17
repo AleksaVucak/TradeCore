@@ -2,10 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
+from app.core.logging import get_logger
 from app.core.security import create_access_token, get_password_hash, verify_password
 from app.dependencies import get_current_user_id, get_db
 from app.models.user import User
 from app.schemas.user import Token, UserCreate, UserResponse
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 
@@ -14,6 +17,7 @@ router = APIRouter()
 def register(user_in: UserCreate, db: Session = Depends(get_db)):
     existing = db.query(User).filter(User.email == user_in.email).first()
     if existing:
+        logger.warning("registration_failed", reason="email_exists", email=user_in.email)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered",
@@ -26,9 +30,11 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
         db.add(user)
         db.commit()
         db.refresh(user)
+        logger.info("user_registered", user_id=user.id, email=user.email)
         return user
     except Exception as e:
         db.rollback()
+        logger.exception("registration_error", email=user_in.email)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e),
@@ -43,11 +49,13 @@ def login(
     # OAuth2 form uses "username" field; we use it for email
     user = db.query(User).filter(User.email == form.username).first()
     if not user or not verify_password(form.password, user.hashed_password):
+        logger.warning("login_failed", email=form.username, reason="invalid_credentials")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
         )
     token = create_access_token(subject=user.id)
+    logger.info("login_success", user_id=user.id, email=user.email)
     return Token(access_token=token)
 
 

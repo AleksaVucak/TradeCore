@@ -4,6 +4,7 @@ from datetime import timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, joinedload
 
+from app.core.logging import get_logger
 from app.dependencies import get_current_user_id, get_db
 from app.models.backtest_run import BacktestRun, BacktestRunStatus
 from app.models.strategy import Strategy, StrategyVersion
@@ -16,6 +17,8 @@ from app.schemas.backtest import (
     TradeOut,
 )
 from app.tasks.backtests import run_backtest_task
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 
@@ -126,6 +129,15 @@ def create_backtest(
         start_time=run.start_time.isoformat(),
         end_time=run.end_time.isoformat(),
         initial_equity=body.initial_equity,
+    )
+
+    logger.info(
+        "backtest_created",
+        run_id=str(run.id),
+        user_id=user_id,
+        strategy_version_id=body.strategy_version_id,
+        symbol_id=body.symbol_id,
+        timeframe=body.timeframe,
     )
 
     return BacktestRunDetail(

@@ -1,12 +1,12 @@
 """Idempotent candle ingestion: fetch from provider and upsert into candles table."""
 
-import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from app.core.logging import get_logger
 from app.models.candle import Candle
 from app.models.symbol import Symbol
 from app.services.market_data.provider import (
@@ -18,7 +18,7 @@ from app.services.market_data.provider import (
 if TYPE_CHECKING:
     from app.services.market_data.provider import MarketDataProvider
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def ingest_candles(
@@ -97,10 +97,10 @@ def ingest_candles(
 
     db.commit()
     logger.info(
-        "Ingested %s candles for symbol_id=%s timeframe=%s",
-        total_upserted,
-        symbol_id,
-        timeframe,
+        "candles_ingested",
+        symbol_id=symbol_id,
+        timeframe=timeframe,
+        total_upserted=total_upserted,
     )
     return total_upserted
 

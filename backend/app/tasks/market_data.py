@@ -1,13 +1,13 @@
 """Celery tasks for market data ingestion."""
 
-import logging
 from datetime import datetime, timezone
 
 from app.celery_app import celery_app
+from app.core.logging import get_logger
 from app.db.session import SessionLocal
 from app.services.market_data.ingestion import ingest_candles
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @celery_app.task
@@ -28,13 +28,31 @@ def ingest_candles_task(
     if end.tzinfo is None:
         end = end.replace(tzinfo=timezone.utc)
 
+    logger.info(
+        "candle_ingest_started",
+        symbol_id=symbol_id,
+        timeframe=timeframe,
+        start_date=start.isoformat(),
+        end_date=end.isoformat(),
+    )
+
     db = SessionLocal()
     try:
         count = ingest_candles(db, symbol_id, timeframe, start, end)
-        logger.info("Ingest completed: symbol_id=%s timeframe=%s candles=%s", symbol_id, timeframe, count)
+        logger.info(
+            "candle_ingest_completed",
+            symbol_id=symbol_id,
+            timeframe=timeframe,
+            candles_upserted=count,
+        )
         return {"status": "ok", "candles_upserted": count}
     except Exception as e:
-        logger.exception("Ingest failed: symbol_id=%s timeframe=%s error=%s", symbol_id, timeframe, e)
+        logger.exception(
+            "candle_ingest_failed",
+            symbol_id=symbol_id,
+            timeframe=timeframe,
+            error=str(e),
+        )
         raise
     finally:
         db.close()

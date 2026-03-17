@@ -1,4 +1,5 @@
 from celery import Celery
+from celery.signals import worker_process_init
 
 from app.config import settings
 
@@ -16,3 +17,13 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
 )
+
+
+@worker_process_init.connect
+def init_worker_logging(**kwargs):
+    """Initialize structured logging when Celery worker starts."""
+    from app.core.logging import configure_logging, get_logger
+    
+    configure_logging()
+    logger = get_logger("celery.worker")
+    logger.info("celery_worker_initialized")

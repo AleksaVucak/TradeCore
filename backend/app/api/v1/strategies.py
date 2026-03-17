@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.logging import get_logger
 from app.dependencies import get_current_user_id, get_db
 from app.models.strategy import Strategy, StrategyVersion
 from app.schemas.strategy import (
@@ -11,6 +12,8 @@ from app.schemas.strategy import (
     UpdateStrategyRequest,
 )
 from app.schemas.strategy_config import validate_strategy_config
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 
@@ -87,6 +90,14 @@ def create_strategy(
     )
     db.add(version)
     db.commit()
+
+    logger.info(
+        "strategy_created",
+        strategy_id=strategy.id,
+        user_id=user_id,
+        name=body.name,
+        strategy_type=body.strategy_type,
+    )
 
     strategy = (
         db.query(Strategy)
@@ -208,4 +219,5 @@ def delete_strategy(
     strategy = _get_strategy_for_user_or_404(strategy_id, user_id, db)
     db.delete(strategy)
     db.commit()
+    logger.info("strategy_deleted", strategy_id=strategy_id, user_id=user_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

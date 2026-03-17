@@ -7,7 +7,11 @@ import redis
 
 from app.api.v1 import api_router
 from app.config import settings
+from app.core.logging import configure_logging, get_logger
 from app.db.session import SessionLocal
+
+configure_logging()
+logger = get_logger(__name__)
 
 app = FastAPI(
     title="TradeCore API",
@@ -29,6 +33,8 @@ app.add_middleware(
 
 
 app.include_router(api_router)
+
+logger.info("app_started", version="0.1.0")
 
 
 @app.get("/health")
