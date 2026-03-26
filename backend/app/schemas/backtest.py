@@ -78,6 +78,29 @@ class BacktestRunDetail(BaseModel):
         from_attributes = True
 
 
+class BenchmarkPointOut(BaseModel):
+    """One point on the buy-and-hold benchmark equity curve (Phase 12.4)."""
+
+    timestamp: datetime
+    equity_value: float
+
+
+class BenchmarkResponse(BaseModel):
+    """Buy-and-hold benchmark comparison for a completed backtest run (Phase 12.4)."""
+
+    run_id: UUID
+    equity_curve: list[BenchmarkPointOut] = Field(
+        ..., description="Buy-and-hold equity curve over the backtest period"
+    )
+    initial_equity: float = Field(..., description="Starting equity")
+    final_equity: float = Field(..., description="Ending equity (buy-and-hold)")
+    total_return_pct: float = Field(..., description="Buy-and-hold total return %")
+    strategy_return_pct: float = Field(..., description="Strategy total return %")
+    alpha_pct: float = Field(
+        ..., description="Alpha: strategy return - benchmark return (percentage points)"
+    )
+
+
 class RiskMetricsResponse(BaseModel):
     """Advanced risk metrics for a completed backtest run (Phase 12.2)."""
 

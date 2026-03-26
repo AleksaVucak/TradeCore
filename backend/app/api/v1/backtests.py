@@ -9,14 +9,18 @@ from app.dependencies import get_current_user_id, get_db
 from app.models.backtest_run import BacktestRun, BacktestRunStatus
 from app.models.strategy import Strategy, StrategyVersion
 from app.models.symbol import Symbol
+from app.models.candle import Candle
 from app.schemas.backtest import (
     BacktestRunDetail,
     BacktestRunListItem,
+    BenchmarkPointOut,
+    BenchmarkResponse,
     CreateBacktestRequest,
     EquityPointOut,
     RiskMetricsResponse,
     TradeOut,
 )
+from app.services.backtest.benchmark import compute_benchmark
 from app.services.backtest.risk_metrics import compute_risk_metrics
 from app.tasks.backtests import run_backtest_task
 
@@ -355,6 +359,97 @@ def get_backtest_risk_metrics(
         avg_trade_pnl=result.avg_trade_pnl,
         initial_equity=result.initial_equity,
         final_equity=result.final_equity,
+    )
+
+
+@router.get("/{run_id}/benchmark", response_model=BenchmarkResponse)
+def get_backtest_benchmark(
+    run_id: str,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Get buy-and-hold benchmark comparison for a completed backtest run (Phase 12.4).
+
+    Computes what the equity curve would look like if you bought at the start
+    and held through the end, using the same initial capital. Also computes
+    alpha (strategy return - benchmark return).
+
+    Returns 404 if the run is not found.
+    Returns 400 if the run is not completed.
+    """
+    run = _get_run_for_user(db, run_id, user_id)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Backtest run not found",
+        )
+
+    # Load run with metrics
+    run = (
+        db.query(BacktestRun)
+        .options(joinedload(BacktestRun.metrics))
+        .get(run.id)
+    )
+
+    if run.status != "completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Benchmark only available for completed runs (current status: {run.status})",
+        )
+
+    # Get initial equity from run options or default
+    initial_equity = 10_000.0
+    if run.run_options and isinstance(run.run_options, dict):
+        initial_equity = float(run.run_options.get("initial_equity", 10_000.0))
+
+    # Get strategy return from metrics
+    strategy_return_pct = 0.0
+    if run.metrics and isinstance(run.metrics.metrics, dict):
+        strategy_return_pct = float(run.metrics.metrics.get("total_return_pct", 0.0))
+
+    # Fetch candle close prices for the run's symbol, timeframe, and date range
+    candles = (
+        db.query(Candle.timestamp, Candle.close)
+        .filter(
+            Candle.symbol_id == run.symbol_id,
+            Candle.timeframe == run.timeframe,
+            Candle.timestamp >= run.start_time,
+            Candle.timestamp <= run.end_time,
+        )
+        .order_by(Candle.timestamp)
+        .all()
+    )
+
+    candle_closes = [(c.timestamp, c.close) for c in candles]
+
+    # Compute benchmark
+    result = compute_benchmark(
+        candle_closes=candle_closes,
+        initial_equity=initial_equity,
+        strategy_return_pct=strategy_return_pct,
+    )
+
+    logger.info(
+        "benchmark_computed",
+        run_id=run_id,
+        user_id=user_id,
+        num_candles=len(candle_closes),
+        benchmark_return_pct=result.total_return_pct,
+        alpha_pct=result.alpha_pct,
+    )
+
+    return BenchmarkResponse(
+        run_id=run.id,
+        equity_curve=[
+            BenchmarkPointOut(timestamp=p.timestamp, equity_value=p.equity_value)
+            for p in result.equity_curve
+        ],
+        initial_equity=result.initial_equity,
+        final_equity=result.final_equity,
+        total_return_pct=result.total_return_pct,
+        strategy_return_pct=strategy_return_pct,
+        alpha_pct=result.alpha_pct,
     )
 
 

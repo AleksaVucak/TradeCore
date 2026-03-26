@@ -104,6 +104,21 @@ export type RiskMetricsResponse = {
   final_equity: number;
 };
 
+export type BenchmarkPointOut = {
+  timestamp: string;
+  equity_value: number;
+};
+
+export type BenchmarkResponse = {
+  run_id: string;
+  equity_curve: BenchmarkPointOut[];
+  initial_equity: number;
+  final_equity: number;
+  total_return_pct: number;
+  strategy_return_pct: number;
+  alpha_pct: number;
+};
+
 export const backtestsApi = {
   list: (token: string) => api.get<BacktestRunListItem[]>("/api/v1/backtests", token),
   get: (token: string, runId: string) =>
@@ -116,6 +131,8 @@ export const backtestsApi = {
     api.get<Record<string, number>>(`/api/v1/backtests/${runId}/metrics`, token),
   getRiskMetrics: (token: string, runId: string) =>
     api.get<RiskMetricsResponse>(`/api/v1/backtests/${runId}/risk-metrics`, token),
+  getBenchmark: (token: string, runId: string) =>
+    api.get<BenchmarkResponse>(`/api/v1/backtests/${runId}/benchmark`, token),
 };
 
 export const strategiesApi = {

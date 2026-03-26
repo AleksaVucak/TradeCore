@@ -14,6 +14,7 @@ import {
   marketDataApi,
   regimesApi,
   type BacktestRunDetail,
+  type BenchmarkResponse,
   type CandleResponse,
   type ModelInfoOut,
   type RegimeLabelOut,
@@ -35,6 +36,9 @@ import {
   Tooltip,
   ResponsiveContainer,
   ReferenceLine,
+  Line,
+  ComposedChart,
+  Legend,
 } from "recharts";
 import { RiskMetricsCard } from "@/components/RiskMetricsCard";
 
@@ -90,6 +94,7 @@ export function RunDetailClient({ runId }: { runId: string }) {
   const [run, setRun] = useState<BacktestRunDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [benchmark, setBenchmark] = useState<BenchmarkResponse | null>(null);
 
   useEffect(() => {
     const token = getToken();
@@ -114,9 +119,11 @@ export function RunDetailClient({ runId }: { runId: string }) {
   }, [runId]);
 
   const equityCurve = run?.equity_curve;
+
   const chartData = useMemo(() => {
     if (!equityCurve || equityCurve.length === 0) return [];
-    return [...equityCurve]
+
+    const strategyData = [...equityCurve]
       .sort(
         (a, b) =>
           new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
@@ -125,16 +132,34 @@ export function RunDetailClient({ runId }: { runId: string }) {
         timestamp: p.timestamp,
         equity_value: p.equity_value,
       }));
-  }, [equityCurve]);
+
+    if (!benchmark || benchmark.equity_curve.length === 0) {
+      return strategyData;
+    }
+
+    const benchmarkMap = new Map(
+      benchmark.equity_curve.map((p) => [p.timestamp, p.equity_value])
+    );
+
+    return strategyData.map((p) => ({
+      ...p,
+      benchmark_value: benchmarkMap.get(p.timestamp) ?? undefined,
+    }));
+  }, [equityCurve, benchmark]);
 
   const hasEquityData = chartData.length > 0;
+  const hasBenchmarkData = benchmark && benchmark.equity_curve.length > 0;
 
   const equityDomain = useMemo(() => {
     if (!hasEquityData) return { min: 0, max: 0, initial: 0 };
-    const values = chartData.map((d) => d.equity_value);
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-    const initial = values[0];
+    const strategyValues = chartData.map((d) => d.equity_value);
+    const benchmarkValues = chartData
+      .map((d) => (d as { benchmark_value?: number }).benchmark_value)
+      .filter((v): v is number => v !== undefined);
+    const allValues = [...strategyValues, ...benchmarkValues];
+    const min = Math.min(...allValues);
+    const max = Math.max(...allValues);
+    const initial = strategyValues[0];
     return { min, max, initial };
   }, [chartData, hasEquityData]);
 
@@ -178,6 +203,16 @@ export function RunDetailClient({ runId }: { runId: string }) {
       .catch(() => setOhlcCandles([]))
       .finally(() => setCandlesLoading(false));
   }, [run]);
+
+  useEffect(() => {
+    if (!run || run.status !== "completed") return;
+    const token = getToken();
+    if (!token) return;
+    backtestsApi
+      .getBenchmark(token, runId)
+      .then((data) => setBenchmark(data))
+      .catch(() => setBenchmark(null));
+  }, [run, runId]);
 
   useEffect(() => {
     if (!run || run.status !== "completed") return;
@@ -438,6 +473,40 @@ export function RunDetailClient({ runId }: { runId: string }) {
                 </CardContent>
               </Card>
             )}
+            {benchmark && (
+              <Card>
+                <CardHeader className="pb-1 pt-3 px-4">
+                  <CardTitle className="text-xs font-medium text-muted-foreground">
+                    Alpha
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pb-3 px-4">
+                  <p
+                    className={`text-lg font-semibold tabular-nums ${
+                      benchmark.alpha_pct >= 0
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : "text-destructive"
+                    }`}
+                  >
+                    {formatPct(benchmark.alpha_pct)}
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+            {benchmark && (
+              <Card>
+                <CardHeader className="pb-1 pt-3 px-4">
+                  <CardTitle className="text-xs font-medium text-muted-foreground">
+                    B&H return
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pb-3 px-4">
+                  <p className="text-lg font-semibold tabular-nums text-muted-foreground">
+                    {formatPct(benchmark.total_return_pct)}
+                  </p>
+                </CardContent>
+              </Card>
+            )}
           </div>
         </div>
       )}
@@ -445,21 +514,36 @@ export function RunDetailClient({ runId }: { runId: string }) {
       {/* Risk metrics card (Phase 12.3) */}
       <RiskMetricsCard runId={runId} runStatus={run.status} />
 
-      {/* Equity curve chart */}
+      {/* Equity curve chart with benchmark (Phase 12.4) */}
       <Card className="mt-6">
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Equity curve</CardTitle>
           <CardDescription>
             {hasEquityData
-              ? `Equity over time (${chartData.length} point${chartData.length !== 1 ? "s" : ""})`
+              ? `Strategy vs buy-and-hold (${chartData.length} point${chartData.length !== 1 ? "s" : ""})`
               : "No equity data for this run."}
+            {hasBenchmarkData && benchmark && (
+              <span className="ml-2">
+                · Alpha:{" "}
+                <span
+                  className={
+                    benchmark.alpha_pct >= 0
+                      ? "text-emerald-600 dark:text-emerald-400 font-medium"
+                      : "text-destructive font-medium"
+                  }
+                >
+                  {benchmark.alpha_pct >= 0 ? "+" : ""}
+                  {benchmark.alpha_pct.toFixed(2)}%
+                </span>
+              </span>
+            )}
           </CardDescription>
         </CardHeader>
         <CardContent>
           {hasEquityData ? (
             <div className="h-[320px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart
+                <ComposedChart
                   data={chartData}
                   margin={{ top: 10, right: 10, left: 10, bottom: 5 }}
                 >
@@ -495,7 +579,6 @@ export function RunDetailClient({ runId }: { runId: string }) {
                     tickLine={{ stroke: "hsl(var(--border))" }}
                   />
                   <YAxis
-                    dataKey="equity_value"
                     tickFormatter={(v) =>
                       v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(v)
                     }
@@ -512,18 +595,27 @@ export function RunDetailClient({ runId }: { runId: string }) {
                       fontSize: 12,
                     }}
                     labelStyle={{ color: "hsl(var(--foreground))" }}
-                    formatter={(value: number | undefined) => [
-                      (value ?? 0).toLocaleString(undefined, {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      }),
-                      "Equity",
+                    formatter={(value, name) => [
+                      typeof value === "number"
+                        ? value.toLocaleString(undefined, {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })
+                        : "—",
+                      name === "equity_value" ? "Strategy" : "Buy & Hold",
                     ]}
                     labelFormatter={(label) =>
-                      new Date(label).toLocaleString(undefined, {
+                      new Date(String(label)).toLocaleString(undefined, {
                         dateStyle: "medium",
                         timeStyle: "short",
                       })
+                    }
+                  />
+                  <Legend
+                    verticalAlign="top"
+                    height={36}
+                    formatter={(value) =>
+                      value === "equity_value" ? "Strategy" : "Buy & Hold"
                     }
                   />
                   <ReferenceLine
@@ -547,7 +639,18 @@ export function RunDetailClient({ runId }: { runId: string }) {
                     dot={false}
                     activeDot={{ r: 4, fill: "#fff", strokeWidth: 2 }}
                   />
-                </AreaChart>
+                  {hasBenchmarkData && (
+                    <Line
+                      type="monotone"
+                      dataKey="benchmark_value"
+                      stroke="#6366f1"
+                      strokeWidth={2}
+                      strokeDasharray="5 5"
+                      dot={false}
+                      activeDot={{ r: 3, fill: "#6366f1" }}
+                    />
+                  )}
+                </ComposedChart>
               </ResponsiveContainer>
             </div>
           ) : (

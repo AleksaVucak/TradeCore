@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.models.backtest_run import BacktestRun, BacktestRunStatus
+from app.models.candle import Candle
 from app.models.equity_snapshot import EquitySnapshot
 from app.models.metric_snapshot import MetricSnapshot
 from app.models.strategy import Strategy, StrategyVersion
@@ -690,4 +691,172 @@ class TestGetBacktestRiskMetrics:
     def test_risk_metrics_requires_auth(self, client: TestClient) -> None:
         fake_id = str(uuid.uuid4())
         resp = client.get(f"/api/v1/backtests/{fake_id}/risk-metrics")
+        assert resp.status_code == 401
+
+
+def _create_candles_for_run(
+    db: Session, symbol: Symbol, timeframe: str, start: datetime, end: datetime
+) -> list[Candle]:
+    """Create sample candles for benchmark testing."""
+    from datetime import timedelta
+
+    candles = []
+    current = start
+    price = 40000.0  # Starting price
+    while current <= end:
+        c = Candle(
+            symbol_id=symbol.id,
+            timeframe=timeframe,
+            timestamp=current,
+            open=price,
+            high=price * 1.01,
+            low=price * 0.99,
+            close=price * 1.005,  # Small upward drift
+            volume=100.0,
+        )
+        db.add(c)
+        candles.append(c)
+        price = price * 1.005  # Continue drift
+        if timeframe == "1h":
+            current += timedelta(hours=1)
+        elif timeframe == "4h":
+            current += timedelta(hours=4)
+        else:
+            current += timedelta(days=1)
+        if len(candles) >= 100:
+            break
+    db.flush()
+    return candles
+
+
+class TestGetBacktestBenchmark:
+    """Phase 12.4: GET /backtests/{id}/benchmark."""
+
+    _EXPECTED_KEYS = frozenset(
+        {
+            "run_id",
+            "equity_curve",
+            "initial_equity",
+            "final_equity",
+            "total_return_pct",
+            "strategy_return_pct",
+            "alpha_pct",
+        }
+    )
+
+    def test_benchmark_completed_run_200(
+        self,
+        client: TestClient,
+        db_session: Session,
+        test_user: User,
+        auth_headers: dict,
+        strategy_and_version,
+        btc_symbol: Symbol,
+    ) -> None:
+        _, v = strategy_and_version
+        run = _create_completed_run(db_session, test_user, v, btc_symbol)
+        _create_candles_for_run(
+            db_session, btc_symbol, run.timeframe, run.start_time, run.end_time
+        )
+        resp = client.get(
+            f"/api/v1/backtests/{run.id}/benchmark", headers=auth_headers
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert set(data.keys()) == self._EXPECTED_KEYS
+        assert data["run_id"] == str(run.id)
+        assert data["initial_equity"] == 10_000.0
+        assert len(data["equity_curve"]) > 0
+        assert data["strategy_return_pct"] == 1.92
+        assert "alpha_pct" in data
+
+    def test_benchmark_no_candles_empty_curve(
+        self,
+        client: TestClient,
+        db_session: Session,
+        test_user: User,
+        auth_headers: dict,
+        strategy_and_version,
+        btc_symbol: Symbol,
+    ) -> None:
+        """No candles: endpoint returns empty curve but still 200."""
+        _, v = strategy_and_version
+        run = _create_completed_run(db_session, test_user, v, btc_symbol)
+        resp = client.get(
+            f"/api/v1/backtests/{run.id}/benchmark", headers=auth_headers
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["equity_curve"] == []
+        assert data["total_return_pct"] == 0.0
+        assert data["alpha_pct"] == 1.92
+
+    def test_benchmark_pending_400(
+        self,
+        client: TestClient,
+        db_session: Session,
+        test_user: User,
+        auth_headers: dict,
+        strategy_and_version,
+        btc_symbol: Symbol,
+    ) -> None:
+        _, v = strategy_and_version
+        run = BacktestRun(
+            user_id=test_user.id,
+            strategy_version_id=v.id,
+            symbol_id=btc_symbol.id,
+            timeframe="1h",
+            start_time=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            end_time=datetime(2025, 6, 1, tzinfo=timezone.utc),
+            status=BacktestRunStatus.PENDING,
+        )
+        db_session.add(run)
+        db_session.flush()
+        resp = client.get(
+            f"/api/v1/backtests/{run.id}/benchmark", headers=auth_headers
+        )
+        assert resp.status_code == 400
+        assert "completed" in resp.json()["detail"].lower()
+
+    def test_benchmark_not_found_404(
+        self, client: TestClient, auth_headers: dict
+    ) -> None:
+        fake_id = str(uuid.uuid4())
+        resp = client.get(
+            f"/api/v1/backtests/{fake_id}/benchmark", headers=auth_headers
+        )
+        assert resp.status_code == 404
+
+    def test_benchmark_other_user_404(
+        self,
+        client: TestClient,
+        db_session: Session,
+        other_user: User,
+        auth_headers: dict,
+        btc_symbol: Symbol,
+    ) -> None:
+        s = Strategy(
+            user_id=other_user.id,
+            name="Other Strat",
+            strategy_type="rsi_ma",
+        )
+        db_session.add(s)
+        db_session.flush()
+        v = StrategyVersion(
+            strategy_id=s.id,
+            version_number=1,
+            config=VALID_CONFIG,
+            is_active=True,
+        )
+        db_session.add(v)
+        db_session.flush()
+        run = _create_completed_run(db_session, other_user, v, btc_symbol)
+        resp = client.get(
+            f"/api/v1/backtests/{run.id}/benchmark", headers=auth_headers
+        )
+        assert resp.status_code == 404
+
+    def test_benchmark_requires_auth(self, client: TestClient) -> None:
+        fake_id = str(uuid.uuid4())
+        resp = client.get(f"/api/v1/backtests/{fake_id}/benchmark")
         assert resp.status_code == 401
