@@ -14,8 +14,10 @@ from app.schemas.backtest import (
     BacktestRunListItem,
     CreateBacktestRequest,
     EquityPointOut,
+    RiskMetricsResponse,
     TradeOut,
 )
+from app.services.backtest.risk_metrics import compute_risk_metrics
 from app.tasks.backtests import run_backtest_task
 
 logger = get_logger(__name__)
@@ -248,6 +250,112 @@ def get_backtest_metrics(
             detail="Metrics not available for this run (run may still be pending or failed)",
         )
     return run.metrics.metrics
+
+
+@router.get("/{run_id}/risk-metrics", response_model=RiskMetricsResponse)
+def get_backtest_risk_metrics(
+    run_id: str,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Get advanced risk metrics for a completed backtest run (Phase 12.2).
+
+    Computes Sortino ratio, Calmar ratio, VaR/CVaR, and detailed trade statistics
+    from the equity curve and trades data.
+
+    Returns 404 if the run is not found or not yet completed.
+    """
+    run = _get_run_for_user(db, run_id, user_id)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Backtest run not found",
+        )
+
+    # Load full run data with equity snapshots and trades
+    run = (
+        db.query(BacktestRun)
+        .options(
+            joinedload(BacktestRun.equity_snapshots),
+            joinedload(BacktestRun.trades),
+            joinedload(BacktestRun.metrics),
+        )
+        .get(run.id)
+    )
+
+    if run.status != "completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Risk metrics only available for completed runs (current status: {run.status})",
+        )
+
+    # Extract equity curve data
+    equity_snapshots = sorted(run.equity_snapshots, key=lambda s: s.timestamp)
+    equity_values = [s.equity_value for s in equity_snapshots]
+    equity_timestamps = [s.timestamp for s in equity_snapshots]
+
+    # Get initial equity from run options or default
+    initial_equity = 10_000.0
+    if run.run_options and isinstance(run.run_options, dict):
+        initial_equity = float(run.run_options.get("initial_equity", 10_000.0))
+
+    # If no equity snapshots but run is completed, use metrics data
+    if not equity_values and run.metrics and isinstance(run.metrics.metrics, dict):
+        final_eq = float(run.metrics.metrics.get("final_equity", initial_equity))
+        equity_values = [initial_equity, final_eq]
+        equity_timestamps = [run.start_time, run.end_time]
+
+    # Extract trade P&Ls (only closed trades with realized P&L)
+    trade_pnls = [
+        t.pnl for t in run.trades
+        if t.side == "sell" and t.pnl is not None
+    ]
+
+    # Determine period hours from timeframe
+    timeframe_hours = {"1h": 1.0, "4h": 4.0, "1d": 24.0}.get(run.timeframe, 1.0)
+
+    # Compute risk metrics
+    result = compute_risk_metrics(
+        equity_values=equity_values,
+        equity_timestamps=equity_timestamps,
+        trade_pnls=trade_pnls,
+        initial_equity=initial_equity,
+        period_hours=timeframe_hours,
+    )
+
+    logger.info(
+        "risk_metrics_computed",
+        run_id=run_id,
+        user_id=user_id,
+        num_equity_points=len(equity_values),
+        num_trades=len(trade_pnls),
+    )
+
+    return RiskMetricsResponse(
+        run_id=run.id,
+        sharpe_ratio=result.sharpe_ratio,
+        sortino_ratio=result.sortino_ratio,
+        calmar_ratio=result.calmar_ratio,
+        total_return_pct=result.total_return_pct,
+        annualized_return_pct=result.annualized_return_pct,
+        max_drawdown_pct=result.max_drawdown_pct,
+        avg_drawdown_pct=result.avg_drawdown_pct,
+        var_95=result.var_95,
+        var_99=result.var_99,
+        cvar_95=result.cvar_95,
+        cvar_99=result.cvar_99,
+        num_trades=result.num_trades,
+        win_rate=result.win_rate,
+        profit_factor=result.profit_factor,
+        avg_win=result.avg_win,
+        avg_loss=result.avg_loss,
+        largest_win=result.largest_win,
+        largest_loss=result.largest_loss,
+        avg_trade_pnl=result.avg_trade_pnl,
+        initial_equity=result.initial_equity,
+        final_equity=result.final_equity,
+    )
 
 
 @router.get("/{run_id}", response_model=BacktestRunDetail)

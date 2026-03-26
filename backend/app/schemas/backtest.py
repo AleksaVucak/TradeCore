@@ -76,3 +76,42 @@ class BacktestRunDetail(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class RiskMetricsResponse(BaseModel):
+    """Advanced risk metrics for a completed backtest run (Phase 12.2)."""
+
+    run_id: UUID
+
+    # Risk-adjusted returns
+    sharpe_ratio: float = Field(..., description="Sharpe ratio (annualized)")
+    sortino_ratio: float = Field(..., description="Sortino ratio (only penalizes downside)")
+    calmar_ratio: float = Field(..., description="Calmar ratio (annualized return / max drawdown)")
+
+    # Return metrics
+    total_return_pct: float = Field(..., description="Total return as percentage")
+    annualized_return_pct: float = Field(..., description="Annualized return as percentage")
+
+    # Drawdown metrics
+    max_drawdown_pct: float = Field(..., description="Maximum drawdown as percentage")
+    avg_drawdown_pct: float = Field(..., description="Average drawdown as percentage")
+
+    # Value at Risk (negative values indicate potential loss)
+    var_95: float = Field(..., description="95% Value at Risk (daily return percentile)")
+    var_99: float = Field(..., description="99% Value at Risk (daily return percentile)")
+    cvar_95: float = Field(..., description="95% Conditional VaR (Expected Shortfall)")
+    cvar_99: float = Field(..., description="99% Conditional VaR (Expected Shortfall)")
+
+    # Trade statistics
+    num_trades: int = Field(..., description="Number of closed trades")
+    win_rate: float = Field(..., description="Win rate as percentage")
+    profit_factor: float = Field(..., description="Gross profit / gross loss")
+    avg_win: float = Field(..., description="Average winning trade P&L")
+    avg_loss: float = Field(..., description="Average losing trade P&L")
+    largest_win: float = Field(..., description="Largest single winning trade")
+    largest_loss: float = Field(..., description="Largest single losing trade (negative)")
+    avg_trade_pnl: float = Field(..., description="Average P&L per trade")
+
+    # Equity
+    initial_equity: float = Field(..., description="Starting equity")
+    final_equity: float = Field(..., description="Ending equity")

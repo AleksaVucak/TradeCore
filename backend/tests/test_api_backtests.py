@@ -542,3 +542,152 @@ class TestGetBacktestMetrics:
         fake_id = str(uuid.uuid4())
         resp = client.get(f"/api/v1/backtests/{fake_id}/metrics")
         assert resp.status_code == 401
+
+
+class TestGetBacktestRiskMetrics:
+    """Phase 12.2: GET /backtests/{id}/risk-metrics."""
+
+    _EXPECTED_KEYS = frozenset(
+        {
+            "run_id",
+            "sharpe_ratio",
+            "sortino_ratio",
+            "calmar_ratio",
+            "total_return_pct",
+            "annualized_return_pct",
+            "max_drawdown_pct",
+            "avg_drawdown_pct",
+            "var_95",
+            "var_99",
+            "cvar_95",
+            "cvar_99",
+            "num_trades",
+            "win_rate",
+            "profit_factor",
+            "avg_win",
+            "avg_loss",
+            "largest_win",
+            "largest_loss",
+            "avg_trade_pnl",
+            "initial_equity",
+            "final_equity",
+        }
+    )
+
+    def test_risk_metrics_completed_run_200(
+        self,
+        client: TestClient,
+        db_session: Session,
+        test_user: User,
+        auth_headers: dict,
+        strategy_and_version,
+        btc_symbol: Symbol,
+    ) -> None:
+        _, v = strategy_and_version
+        run = _create_completed_run(db_session, test_user, v, btc_symbol)
+        resp = client.get(
+            f"/api/v1/backtests/{run.id}/risk-metrics", headers=auth_headers
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert set(data.keys()) == self._EXPECTED_KEYS
+        assert data["run_id"] == str(run.id)
+        assert data["num_trades"] == 1
+        assert data["initial_equity"] == 10_000.0
+        assert data["final_equity"] == 10_191.8
+
+    def test_risk_metrics_completed_no_equity_uses_metrics_fallback(
+        self,
+        client: TestClient,
+        db_session: Session,
+        test_user: User,
+        auth_headers: dict,
+        strategy_and_version,
+        btc_symbol: Symbol,
+    ) -> None:
+        """No snapshots: endpoint builds minimal curve from metrics."""
+        _, v = strategy_and_version
+        run = _create_completed_run(
+            db_session,
+            test_user,
+            v,
+            btc_symbol,
+            with_equity=False,
+            with_trades=False,
+        )
+        resp = client.get(
+            f"/api/v1/backtests/{run.id}/risk-metrics", headers=auth_headers
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["final_equity"] == 10_191.8
+
+    def test_risk_metrics_pending_400(
+        self,
+        client: TestClient,
+        db_session: Session,
+        test_user: User,
+        auth_headers: dict,
+        strategy_and_version,
+        btc_symbol: Symbol,
+    ) -> None:
+        _, v = strategy_and_version
+        run = BacktestRun(
+            user_id=test_user.id,
+            strategy_version_id=v.id,
+            symbol_id=btc_symbol.id,
+            timeframe="1h",
+            start_time=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            end_time=datetime(2025, 6, 1, tzinfo=timezone.utc),
+            status=BacktestRunStatus.PENDING,
+        )
+        db_session.add(run)
+        db_session.flush()
+        resp = client.get(
+            f"/api/v1/backtests/{run.id}/risk-metrics", headers=auth_headers
+        )
+        assert resp.status_code == 400
+        assert "completed" in resp.json()["detail"].lower()
+
+    def test_risk_metrics_not_found_404(
+        self, client: TestClient, auth_headers: dict
+    ) -> None:
+        fake_id = str(uuid.uuid4())
+        resp = client.get(
+            f"/api/v1/backtests/{fake_id}/risk-metrics", headers=auth_headers
+        )
+        assert resp.status_code == 404
+
+    def test_risk_metrics_other_user_404(
+        self,
+        client: TestClient,
+        db_session: Session,
+        other_user: User,
+        auth_headers: dict,
+        btc_symbol: Symbol,
+    ) -> None:
+        s = Strategy(
+            user_id=other_user.id,
+            name="Other Strat",
+            strategy_type="rsi_ma",
+        )
+        db_session.add(s)
+        db_session.flush()
+        v = StrategyVersion(
+            strategy_id=s.id,
+            version_number=1,
+            config=VALID_CONFIG,
+            is_active=True,
+        )
+        db_session.add(v)
+        db_session.flush()
+        run = _create_completed_run(db_session, other_user, v, btc_symbol)
+        resp = client.get(
+            f"/api/v1/backtests/{run.id}/risk-metrics", headers=auth_headers
+        )
+        assert resp.status_code == 404
+
+    def test_risk_metrics_requires_auth(self, client: TestClient) -> None:
+        fake_id = str(uuid.uuid4())
+        resp = client.get(f"/api/v1/backtests/{fake_id}/risk-metrics")
+        assert resp.status_code == 401
