@@ -79,6 +79,31 @@ export const symbolsApi = {
   list: () => api.get<Symbol[]>("/api/v1/symbols"),
 };
 
+export type RiskMetricsResponse = {
+  run_id: string;
+  sharpe_ratio: number;
+  sortino_ratio: number;
+  calmar_ratio: number;
+  total_return_pct: number;
+  annualized_return_pct: number;
+  max_drawdown_pct: number;
+  avg_drawdown_pct: number;
+  var_95: number;
+  var_99: number;
+  cvar_95: number;
+  cvar_99: number;
+  num_trades: number;
+  win_rate: number;
+  profit_factor: number;
+  avg_win: number;
+  avg_loss: number;
+  largest_win: number;
+  largest_loss: number;
+  avg_trade_pnl: number;
+  initial_equity: number;
+  final_equity: number;
+};
+
 export const backtestsApi = {
   list: (token: string) => api.get<BacktestRunListItem[]>("/api/v1/backtests", token),
   get: (token: string, runId: string) =>
@@ -89,6 +114,8 @@ export const backtestsApi = {
     api.get<EquityPointOut[]>(`/api/v1/backtests/${runId}/equity`, token),
   getMetrics: (token: string, runId: string) =>
     api.get<Record<string, number>>(`/api/v1/backtests/${runId}/metrics`, token),
+  getRiskMetrics: (token: string, runId: string) =>
+    api.get<RiskMetricsResponse>(`/api/v1/backtests/${runId}/risk-metrics`, token),
 };
 
 export const strategiesApi = {

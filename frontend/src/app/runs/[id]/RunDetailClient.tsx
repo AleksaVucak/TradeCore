@@ -36,6 +36,7 @@ import {
   ResponsiveContainer,
   ReferenceLine,
 } from "recharts";
+import { RiskMetricsCard } from "@/components/RiskMetricsCard";
 
 function formatPct(value: number | null | undefined): string {
   if (value == null) return "—";
@@ -316,7 +317,7 @@ export function RunDetailClient({ runId }: { runId: string }) {
       {hasMetrics && metrics && (
         <div className="mt-6">
           <h2 className="text-sm font-medium text-muted-foreground mb-3">
-            Metrics
+            Summary
           </h2>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
             {typeof metrics.total_return_pct === "number" && (
@@ -440,6 +441,9 @@ export function RunDetailClient({ runId }: { runId: string }) {
           </div>
         </div>
       )}
+
+      {/* Risk metrics card (Phase 12.3) */}
+      <RiskMetricsCard runId={runId} runStatus={run.status} />
 
       {/* Equity curve chart */}
       <Card className="mt-6">
