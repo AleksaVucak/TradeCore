@@ -28,7 +28,6 @@ import {
   type RegimeBand,
 } from "@/components/charts/CandlestickChart";
 import {
-  AreaChart,
   Area,
   XAxis,
   YAxis,

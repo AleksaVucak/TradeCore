@@ -72,39 +72,51 @@ export function RiskMetricsCard({ runId, runStatus }: RiskMetricsCardProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const token = getToken();
+  const shouldFetch = runStatus === "completed" && !!token;
+
   useEffect(() => {
-    if (runStatus !== "completed") {
+    if (!shouldFetch) {
       return;
     }
 
-    const token = getToken();
-    if (!token) {
-      setError("Not authenticated");
-      return;
-    }
+    let cancelled = false;
 
-    setLoading(true);
-    setError(null);
-
-    backtestsApi
-      .getRiskMetrics(token, runId)
-      .then((data) => {
-        setMetrics(data);
-        setError(null);
-      })
-      .catch((err) => {
-        const message = err instanceof Error ? err.message : "Failed to load risk metrics";
-        if (message.includes("400") || message.includes("not completed")) {
+    (async () => {
+      setLoading(true);
+      try {
+        const data = await backtestsApi.getRiskMetrics(token!, runId);
+        if (!cancelled) {
+          setMetrics(data);
           setError(null);
-          setMetrics(null);
-        } else {
-          setError(message);
         }
-      })
-      .finally(() => setLoading(false));
-  }, [runId, runStatus]);
+      } catch (err) {
+        if (!cancelled) {
+          const message = err instanceof Error ? err.message : "Failed to load risk metrics";
+          if (message.includes("400") || message.includes("not completed")) {
+            setError(null);
+            setMetrics(null);
+          } else {
+            setError(message);
+          }
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [runId, shouldFetch, token]);
 
   if (runStatus !== "completed") {
+    return null;
+  }
+
+  if (!token) {
     return null;
   }
 
