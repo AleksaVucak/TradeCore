@@ -9,4 +9,5 @@ from app.models.equity_snapshot import EquitySnapshot  # noqa: F401
 from app.models.metric_snapshot import MetricSnapshot  # noqa: F401
 from app.models.ml_model_metadata import MLModelMetadata  # noqa: F401
 from app.models.regime_label import RegimeLabel  # noqa: F401
+from app.models.fetch_job import FetchJob, FetchJobStatus  # noqa: F401
 

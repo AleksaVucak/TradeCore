@@ -20,4 +20,5 @@ class Symbol(Base):
 
     candles: Mapped[list["Candle"]] = relationship(back_populates="symbol")
     backtest_runs: Mapped[list["BacktestRun"]] = relationship(back_populates="symbol")
+    fetch_jobs: Mapped[list["FetchJob"]] = relationship(back_populates="symbol")
 

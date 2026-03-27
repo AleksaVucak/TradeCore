@@ -21,4 +21,5 @@ class User(Base):
 
     strategies: Mapped[list["Strategy"]] = relationship(back_populates="user")
     backtest_runs: Mapped[list["BacktestRun"]] = relationship(back_populates="user")
+    fetch_jobs: Mapped[list["FetchJob"]] = relationship(back_populates="user")
 
