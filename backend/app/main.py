@@ -6,6 +6,7 @@ from sqlalchemy import text
 import redis
 
 from app.api.v1 import api_router
+from app.api.ws_market_data import router as market_data_ws_router
 from app.config import settings
 from app.core.logging import configure_logging, get_logger
 from app.db.session import SessionLocal
@@ -33,6 +34,7 @@ app.add_middleware(
 
 
 app.include_router(api_router)
+app.include_router(market_data_ws_router)
 
 logger.info("app_started", version="0.1.0")
 

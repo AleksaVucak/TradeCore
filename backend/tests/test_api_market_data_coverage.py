@@ -165,10 +165,9 @@ class TestGetMarketDataCoverage:
         self,
         client: TestClient,
         db_session: Session,
-        test_symbols: list[Symbol],
         auth_headers: dict,
     ) -> None:
-        btc, _, _ = test_symbols
+        btc = _add_symbol(db_session, symbol="COVBTC2032")
         _add_candle(
             db_session,
             symbol_id=btc.id,

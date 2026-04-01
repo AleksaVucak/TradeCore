@@ -22,6 +22,11 @@ import {
 import { getToken } from "@/lib/auth";
 
 const TIMEFRAMES = ["1h", "4h"] as const;
+const WS_BASE =
+  process.env.NEXT_PUBLIC_WS_URL ??
+  (typeof window !== "undefined"
+    ? `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.hostname}:8000`
+    : "ws://localhost:8000");
 
 function toDateTimeLocalValue(date: Date) {
   const year = date.getFullYear();
@@ -51,6 +56,12 @@ function formatDateOnly(value: string) {
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat().format(value);
+}
+
+function getMarketDataWebSocketUrl(jobId: string, token: string) {
+  const url = new URL(`${WS_BASE}/ws/market-data/${jobId}`);
+  url.searchParams.set("token", token);
+  return url.toString();
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -102,6 +113,12 @@ export default function MarketDataPage() {
   async function loadRecentJobs(token: string) {
     const data = await marketDataApi.listFetchJobs(token, { limit: 8 });
     setJobs(data);
+    setActiveJob((current) => {
+      if (current) {
+        return data.find((job) => job.job_id === current.job_id) ?? current;
+      }
+      return data.find((job) => job.status === "pending" || job.status === "running") ?? null;
+    });
   }
 
   async function loadCoverage(token: string, symbolId: number, selectedTimeframe: string) {
@@ -192,28 +209,66 @@ export default function MarketDataPage() {
       return;
     }
 
-    let cancelled = false;
     const token = getToken();
     if (!token) return;
+    const jobId = activeJob.job_id;
 
-    const poll = async () => {
+    let cancelled = false;
+    let closedIntentionally = false;
+    const websocket = new WebSocket(getMarketDataWebSocketUrl(jobId, token));
+
+    websocket.onmessage = async (event) => {
       try {
-        const next = await marketDataApi.getFetchJob(token, activeJob.job_id);
+        const next = JSON.parse(event.data) as FetchJobStatusResponse;
         if (cancelled) return;
         setActiveJob(next);
-        await loadRecentJobs(token);
+        setJobs((current) => {
+          const nextJobs = [...current];
+          const existingIndex = nextJobs.findIndex((job) => job.job_id === next.job_id);
+          if (existingIndex >= 0) {
+            nextJobs[existingIndex] = next;
+          } else {
+            nextJobs.unshift(next);
+          }
+          return nextJobs.slice(0, 8);
+        });
+
         if (next.status === "completed") {
           setNotice("Fetch completed successfully.");
           if (selectedSymbolId === String(next.symbol_id) && timeframe === next.timeframe) {
             await loadCoverage(token, next.symbol_id, next.timeframe);
           }
-          return;
-        }
-        if (next.status === "failed") {
+        } else if (next.status === "failed") {
           setError(next.error_message ?? "Fetch failed.");
-          return;
         }
-        window.setTimeout(poll, 2000);
+      } catch {
+        if (!cancelled) {
+          setError("Received an invalid progress update.");
+        }
+      }
+    };
+
+    websocket.onerror = () => {
+      if (!cancelled) {
+        setError("Live progress connection failed. Refresh the page and try again.");
+      }
+    };
+
+    websocket.onclose = async () => {
+      if (cancelled || closedIntentionally) return;
+      try {
+        const latest = await marketDataApi.getFetchJob(token, jobId);
+        if (cancelled) return;
+        setActiveJob(latest);
+        await loadRecentJobs(token);
+        if (latest.status === "completed") {
+          setNotice("Fetch completed successfully.");
+          if (selectedSymbolId === String(latest.symbol_id) && timeframe === latest.timeframe) {
+            await loadCoverage(token, latest.symbol_id, latest.timeframe);
+          }
+        } else if (latest.status === "failed") {
+          setError(latest.error_message ?? "Fetch failed.");
+        }
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Failed to refresh fetch status.");
@@ -221,10 +276,10 @@ export default function MarketDataPage() {
       }
     };
 
-    const timeoutId = window.setTimeout(poll, 2000);
     return () => {
       cancelled = true;
-      window.clearTimeout(timeoutId);
+      closedIntentionally = true;
+      websocket.close();
     };
   }, [activeJob, selectedSymbolId, timeframe]);
 
@@ -448,8 +503,7 @@ export default function MarketDataPage() {
           <CardHeader>
             <CardTitle>Active fetch job</CardTitle>
             <CardDescription>
-              Phase 13.3 uses polling against the fetch-job endpoint to keep this status
-              updated until Phase 13.4 adds live WebSocket progress.
+              Live progress updates stream over WebSocket while the fetch job runs.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
