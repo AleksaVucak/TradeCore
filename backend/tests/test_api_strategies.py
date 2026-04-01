@@ -97,21 +97,20 @@ class TestCreateStrategy:
         assert data["versions"][0]["version_number"] == 1
         assert data["versions"][0]["is_active"] is True
 
-    def test_create_invalid_config(
+    def test_create_invalid_config_returns_422(
         self, client: TestClient, auth_headers: dict
     ) -> None:
-        from pydantic import ValidationError
-
-        with pytest.raises((ValidationError, Exception)):
-            client.post(
-                "/api/v1/strategies",
-                json={
-                    "name": "Bad",
-                    "strategy_type": "rsi_ma",
-                    "config": {"rsi_period": -5},
-                },
-                headers=auth_headers,
-            )
+        resp = client.post(
+            "/api/v1/strategies",
+            json={
+                "name": "Bad",
+                "strategy_type": "rsi_ma",
+                "config": {"rsi_period": -5},
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 422
+        assert "rsi_period" in resp.json()["detail"]
 
     def test_create_requires_auth(self, client: TestClient) -> None:
         resp = client.post(
@@ -231,22 +230,21 @@ class TestCreateVersion:
         assert active[0]["version_number"] == 2
         assert active[0]["config"]["rsi_period"] == 10
 
-    def test_create_version_invalid_config(
+    def test_create_version_invalid_config_returns_422(
         self,
         client: TestClient,
         db_session: Session,
         test_user: User,
         auth_headers: dict,
     ) -> None:
-        from pydantic import ValidationError
-
         s = _create_strategy(db_session, test_user)
-        with pytest.raises((ValidationError, Exception)):
-            client.post(
-                f"/api/v1/strategies/{s.id}/versions",
-                json={"config": {"rsi_period": -1}},
-                headers=auth_headers,
-            )
+        resp = client.post(
+            f"/api/v1/strategies/{s.id}/versions",
+            json={"config": {"rsi_period": -1}},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 422
+        assert "rsi_period" in resp.json()["detail"]
 
 
 class TestDeleteStrategy:

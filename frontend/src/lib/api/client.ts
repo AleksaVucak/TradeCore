@@ -1,6 +1,6 @@
 // Use same-origin proxy to avoid CORS; proxy forwards to backend (see app/api/proxy/[[...path]]/route.ts)
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "/api/proxy";
-const REQUEST_TIMEOUT_MS = 15_000;
+const REQUEST_TIMEOUT_MS = 35_000;
 
 export type ApiError = { detail: string };
 

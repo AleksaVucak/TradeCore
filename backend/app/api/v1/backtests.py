@@ -2,7 +2,7 @@ import uuid
 from datetime import timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.core.logging import get_logger
 from app.dependencies import get_current_user_id, get_db
@@ -427,8 +427,8 @@ def get_backtest_risk_metrics(
     run = (
         db.query(BacktestRun)
         .options(
-            joinedload(BacktestRun.equity_snapshots),
-            joinedload(BacktestRun.trades),
+            selectinload(BacktestRun.equity_snapshots),
+            selectinload(BacktestRun.trades),
             joinedload(BacktestRun.metrics),
         )
         .get(run.id)
@@ -616,8 +616,8 @@ def get_backtest(
     run = (
         db.query(BacktestRun)
         .options(
-            joinedload(BacktestRun.trades),
-            joinedload(BacktestRun.equity_snapshots),
+            selectinload(BacktestRun.trades),
+            selectinload(BacktestRun.equity_snapshots),
             joinedload(BacktestRun.metrics),
         )
         .filter(BacktestRun.id == run_uuid, BacktestRun.user_id == user_id)

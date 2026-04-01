@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from pydantic import ValidationError
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.logging import get_logger
@@ -34,6 +35,16 @@ def _get_strategy_for_user_or_404(
     return strategy
 
 
+def _validate_strategy_config_or_422(strategy_type: str, config: dict):
+    try:
+        return validate_strategy_config(strategy_type, config)
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
+
+
 @router.get("", response_model=list[StrategyListItem])
 def list_strategies(
     user_id: int = Depends(get_current_user_id),
@@ -65,7 +76,7 @@ def create_strategy(
 
     The config is validated according to strategy_type before being stored.
     """
-    validated = validate_strategy_config(body.strategy_type, body.config)
+    validated = _validate_strategy_config_or_422(body.strategy_type, body.config)
 
     strategy = Strategy(
         user_id=user_id,
@@ -173,7 +184,7 @@ def create_strategy_version(
     """
     strategy = _get_strategy_for_user_or_404(strategy_id, user_id, db)
 
-    validated = validate_strategy_config(strategy.strategy_type, body.config)
+    validated = _validate_strategy_config_or_422(strategy.strategy_type, body.config)
     config_dict = (
         validated.to_config_dict()
         if hasattr(validated, "to_config_dict")

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Card,
   CardContent,
@@ -37,7 +37,7 @@ const initialForm: FormState = {
   rsi_buy_threshold: "30",
   rsi_sell_threshold: "70",
   ma_period: "20",
-  position_size_pct: "1.0",
+  position_size_pct: "100",
   stop_loss_pct: "2.0",
   take_profit_pct: "5.0",
   fee_rate: "0.001",
@@ -49,8 +49,13 @@ export default function NewStrategyPage() {
   const [form, setForm] = useState<FormState>(initialForm);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [token, setToken] = useState<string | null>(null);
 
-  const token = typeof window !== "undefined" ? getToken() : null;
+  useEffect(() => {
+    Promise.resolve().then(() => {
+      setToken(getToken());
+    });
+  }, []);
 
   function handleChange(
     e: React.ChangeEvent<HTMLInputElement>,
@@ -78,7 +83,10 @@ export default function NewStrategyPage() {
           rsi_buy_threshold: Number(form.rsi_buy_threshold) || undefined,
           rsi_sell_threshold: Number(form.rsi_sell_threshold) || undefined,
           ma_period: Number(form.ma_period) || undefined,
-          position_size_pct: Number(form.position_size_pct) || undefined,
+          position_size_pct:
+            form.position_size_pct.trim() === ""
+              ? undefined
+              : Number(form.position_size_pct) / 100,
           stop_loss_pct: Number(form.stop_loss_pct) || undefined,
           take_profit_pct: Number(form.take_profit_pct) || undefined,
           fee_rate: Number(form.fee_rate) || undefined,
@@ -225,12 +233,15 @@ export default function NewStrategyPage() {
                       id="position_size_pct"
                       name="position_size_pct"
                       type="number"
-                      min={1}
+                      min={0.01}
                       max={100}
                       step={0.01}
                       value={form.position_size_pct}
                       onChange={handleChange}
                     />
+                    <p className="text-xs text-muted-foreground">
+                      Enter `100` to use the full account balance per trade.
+                    </p>
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="stop_loss_pct">Stop loss (%)</Label>

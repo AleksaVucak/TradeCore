@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:8000";
-const BACKEND_TIMEOUT_MS = 12_000;
+const BACKEND_TIMEOUT_MS = 30_000;
 
 export async function GET(
   request: NextRequest,
