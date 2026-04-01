@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class TradeOut(BaseModel):
@@ -57,6 +57,72 @@ class CreateBacktestRequest(BaseModel):
     start_time: datetime = Field(..., description="Backtest start (UTC)")
     end_time: datetime = Field(..., description="Backtest end (UTC)")
     initial_equity: float = Field(10_000.0, ge=0.01, description="Starting equity")
+
+    @field_validator("timeframe")
+    @classmethod
+    def validate_timeframe(cls, value: str) -> str:
+        allowed = {"1h", "4h", "1d"}
+        if value not in allowed:
+            raise ValueError(f"timeframe must be one of: {', '.join(sorted(allowed))}")
+        return value
+
+
+class WalkForwardValidationRequest(BaseModel):
+    strategy_version_id: int = Field(..., description="Strategy version to validate")
+    symbol_id: int = Field(..., description="Symbol to validate on")
+    timeframe: str = Field(..., description="Candle interval: 1h, 4h, or 1d")
+    start_time: datetime = Field(..., description="Validation start (UTC)")
+    end_time: datetime = Field(..., description="Validation end (UTC)")
+    initial_equity: float = Field(10_000.0, ge=0.01, description="Starting equity per window")
+    window_bars: int = Field(..., ge=2, description="Bars included in each walk-forward window")
+    step_bars: int = Field(..., ge=1, description="Bars to move forward between windows")
+
+    @field_validator("timeframe")
+    @classmethod
+    def validate_walk_forward_timeframe(cls, value: str) -> str:
+        allowed = {"1h", "4h", "1d"}
+        if value not in allowed:
+            raise ValueError(f"timeframe must be one of: {', '.join(sorted(allowed))}")
+        return value
+
+
+class WalkForwardWindowOut(BaseModel):
+    window_index: int
+    start_time: datetime
+    end_time: datetime
+    num_candles: int
+    num_trades: int
+    initial_equity: float
+    final_equity: float
+    total_return_pct: float
+    max_drawdown_pct: float
+    sharpe_ratio: float
+
+
+class WalkForwardSummaryOut(BaseModel):
+    total_windows: int
+    window_bars: int
+    step_bars: int
+    profitable_windows: int
+    profitable_window_pct: float
+    avg_total_return_pct: float
+    best_total_return_pct: float
+    worst_total_return_pct: float
+    avg_max_drawdown_pct: float
+    avg_sharpe_ratio: float
+
+
+class WalkForwardValidationResponse(BaseModel):
+    strategy_version_id: int
+    symbol_id: int
+    timeframe: str
+    start_time: datetime
+    end_time: datetime
+    initial_equity: float
+    window_bars: int
+    step_bars: int
+    windows: list[WalkForwardWindowOut]
+    summary: WalkForwardSummaryOut
 
 
 class BacktestRunDetail(BaseModel):

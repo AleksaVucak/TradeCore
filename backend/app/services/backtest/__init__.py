@@ -13,11 +13,13 @@ from app.services.backtest.types import (
     BacktestTrade,
     EquityPoint,
 )
+from app.services.backtest.walk_forward import run_walk_forward_validation
 
 __all__ = [
     "run_backtest_rsi_ma",
     "compute_metrics",
     "compute_metrics_from_result",
+    "run_walk_forward_validation",
     "BacktestCandle",
     "BacktestResult",
     "BacktestTrade",

@@ -867,3 +867,138 @@ class TestGetBacktestBenchmark:
         fake_id = str(uuid.uuid4())
         resp = client.get(f"/api/v1/backtests/{fake_id}/benchmark")
         assert resp.status_code == 401
+
+
+class TestWalkForwardValidation:
+    """Phase 14.1: POST /backtests/walk-forward."""
+
+    def test_walk_forward_success(
+        self,
+        client: TestClient,
+        db_session: Session,
+        auth_headers: dict,
+        strategy_and_version,
+    ) -> None:
+        _, version = strategy_and_version
+        walk_symbol = _create_test_symbol(db_session, "WLKFBTCA")
+        start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2025, 1, 5,  tzinfo=timezone.utc)
+        _create_candles_for_run(db_session, walk_symbol, "1h", start, end)
+
+        resp = client.post(
+            "/api/v1/backtests/walk-forward",
+            json={
+                "strategy_version_id": version.id,
+                "symbol_id": walk_symbol.id,
+                "timeframe": "1h",
+                "start_time": start.isoformat().replace("+00:00", "Z"),
+                "end_time": end.isoformat().replace("+00:00", "Z"),
+                "initial_equity": 10000,
+                "window_bars": 24,
+                "step_bars": 12,
+            },
+            headers=auth_headers,
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["strategy_version_id"] == version.id
+        assert data["symbol_id"] == walk_symbol.id
+        assert data["window_bars"] == 24
+        assert data["step_bars"] == 12
+        assert len(data["windows"]) >= 2
+        assert data["summary"]["total_windows"] == len(data["windows"])
+        assert data["summary"]["window_bars"] == 24
+        assert "avg_total_return_pct" in data["summary"]
+        assert all(window["num_candles"] == 24 for window in data["windows"])
+
+    def test_walk_forward_requires_enough_candles(
+        self,
+        client: TestClient,
+        db_session: Session,
+        auth_headers: dict,
+        strategy_and_version,
+    ) -> None:
+        _, version = strategy_and_version
+        walk_symbol = _create_test_symbol(db_session, "WLKFBTCB")
+        start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2025, 1, 1, 12, tzinfo=timezone.utc)
+        _create_candles_for_run(db_session, walk_symbol, "1h", start, end)
+
+        resp = client.post(
+            "/api/v1/backtests/walk-forward",
+            json={
+                "strategy_version_id": version.id,
+                "symbol_id": walk_symbol.id,
+                "timeframe": "1h",
+                "start_time": start.isoformat().replace("+00:00", "Z"),
+                "end_time": end.isoformat().replace("+00:00", "Z"),
+                "initial_equity": 10000,
+                "window_bars": 48,
+                "step_bars": 12,
+            },
+            headers=auth_headers,
+        )
+
+        assert resp.status_code == 400
+        assert "window size" in resp.json()["detail"].lower()
+
+    def test_walk_forward_other_users_version_404(
+        self,
+        client: TestClient,
+        db_session: Session,
+        other_user: User,
+        auth_headers: dict,
+    ) -> None:
+        strategy = Strategy(
+            user_id=other_user.id,
+            name="Other Walk Forward",
+            strategy_type="rsi_ma",
+        )
+        db_session.add(strategy)
+        db_session.flush()
+        version = StrategyVersion(
+            strategy_id=strategy.id,
+            version_number=1,
+            config=VALID_CONFIG,
+            is_active=True,
+        )
+        db_session.add(version)
+        db_session.flush()
+        walk_symbol = _create_test_symbol(db_session, "WLKFBTCC")
+        start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2025, 1, 5, tzinfo=timezone.utc)
+        _create_candles_for_run(db_session, walk_symbol, "1h", start, end)
+
+        resp = client.post(
+            "/api/v1/backtests/walk-forward",
+            json={
+                "strategy_version_id": version.id,
+                "symbol_id": walk_symbol.id,
+                "timeframe": "1h",
+                "start_time": start.isoformat().replace("+00:00", "Z"),
+                "end_time": end.isoformat().replace("+00:00", "Z"),
+                "initial_equity": 10000,
+                "window_bars": 24,
+                "step_bars": 12,
+            },
+            headers=auth_headers,
+        )
+
+        assert resp.status_code == 404
+
+    def test_walk_forward_requires_auth(self, client: TestClient) -> None:
+        resp = client.post(
+            "/api/v1/backtests/walk-forward",
+            json={
+                "strategy_version_id": 1,
+                "symbol_id": 1,
+                "timeframe": "1h",
+                "start_time": "2025-01-01T00:00:00Z",
+                "end_time": "2025-01-05T00:00:00Z",
+                "initial_equity": 10000,
+                "window_bars": 24,
+                "step_bars": 12,
+            },
+        )
+        assert resp.status_code == 401

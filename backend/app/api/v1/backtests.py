@@ -19,7 +19,13 @@ from app.schemas.backtest import (
     EquityPointOut,
     RiskMetricsResponse,
     TradeOut,
+    WalkForwardSummaryOut,
+    WalkForwardValidationRequest,
+    WalkForwardValidationResponse,
+    WalkForwardWindowOut,
 )
+from app.schemas.strategy_config import validate_strategy_config
+from app.services.backtest import BacktestCandle, run_walk_forward_validation
 from app.services.backtest.benchmark import compute_benchmark
 from app.services.backtest.risk_metrics import compute_risk_metrics
 from app.tasks.backtests import run_backtest_task
@@ -27,6 +33,36 @@ from app.tasks.backtests import run_backtest_task
 logger = get_logger(__name__)
 
 router = APIRouter()
+
+
+def _normalize_range(
+    start_dt,
+    end_dt,
+):
+    if start_dt.tzinfo is None:
+        start_dt = start_dt.replace(tzinfo=timezone.utc)
+    if end_dt.tzinfo is None:
+        end_dt = end_dt.replace(tzinfo=timezone.utc)
+    return start_dt, end_dt
+
+
+def _get_strategy_version_for_user(
+    db: Session, strategy_version_id: int, user_id: int
+) -> StrategyVersion | None:
+    return (
+        db.query(StrategyVersion)
+        .join(Strategy)
+        .options(joinedload(StrategyVersion.strategy))
+        .filter(
+            StrategyVersion.id == strategy_version_id,
+            Strategy.user_id == user_id,
+        )
+        .first()
+    )
+
+
+def _timeframe_to_hours(timeframe: str) -> float:
+    return {"1h": 1.0, "4h": 4.0, "1d": 24.0}.get(timeframe, 1.0)
 
 
 @router.get("", response_model=list[BacktestRunListItem])
@@ -81,14 +117,8 @@ def create_backtest(
     The worker will update status to running → completed or failed.
     """
     # Ensure strategy_version belongs to user (via strategy)
-    strategy_version = (
-        db.query(StrategyVersion)
-        .join(Strategy)
-        .filter(
-            StrategyVersion.id == body.strategy_version_id,
-            Strategy.user_id == user_id,
-        )
-        .first()
+    strategy_version = _get_strategy_version_for_user(
+        db, body.strategy_version_id, user_id
     )
     if strategy_version is None:
         raise HTTPException(
@@ -101,12 +131,7 @@ def create_backtest(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Symbol not found",
         )
-    start_dt = body.start_time
-    end_dt = body.end_time
-    if start_dt.tzinfo is None:
-        start_dt = start_dt.replace(tzinfo=timezone.utc)
-    if end_dt.tzinfo is None:
-        end_dt = end_dt.replace(tzinfo=timezone.utc)
+    start_dt, end_dt = _normalize_range(body.start_time, body.end_time)
     if start_dt >= end_dt:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -158,6 +183,127 @@ def create_backtest(
         trades=[],
         equity_curve=[],
         metrics=None,
+    )
+
+
+@router.post(
+    "/walk-forward",
+    response_model=WalkForwardValidationResponse,
+)
+def run_walk_forward_backtest(
+    body: WalkForwardValidationRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Run rolling window validation for a strategy over stored candles (Phase 14.1)."""
+    strategy_version = _get_strategy_version_for_user(
+        db, body.strategy_version_id, user_id
+    )
+    if strategy_version is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Strategy version not found or access denied",
+        )
+    if db.query(Symbol).filter(Symbol.id == body.symbol_id).first() is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Symbol not found",
+        )
+
+    start_dt, end_dt = _normalize_range(body.start_time, body.end_time)
+    if start_dt >= end_dt:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="start_time must be before end_time",
+        )
+
+    candles_db = (
+        db.query(Candle)
+        .filter(
+            Candle.symbol_id == body.symbol_id,
+            Candle.timeframe == body.timeframe,
+            Candle.timestamp >= start_dt,
+            Candle.timestamp <= end_dt,
+        )
+        .order_by(Candle.timestamp.asc())
+        .all()
+    )
+    candles = [
+        BacktestCandle.from_candle_like(
+            timestamp=c.timestamp,
+            open=c.open,
+            high=c.high,
+            low=c.low,
+            close=c.close,
+            volume=c.volume,
+        )
+        for c in candles_db
+    ]
+
+    if len(candles) < body.window_bars:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Not enough candles for the requested window size",
+        )
+
+    validated_config = validate_strategy_config(
+        strategy_version.strategy.strategy_type,
+        strategy_version.config,
+    )
+    result = run_walk_forward_validation(
+        candles,
+        validated_config,
+        initial_equity=body.initial_equity,
+        window_bars=body.window_bars,
+        step_bars=body.step_bars,
+        period_hours=_timeframe_to_hours(body.timeframe),
+    )
+
+    logger.info(
+        "walk_forward_completed",
+        user_id=user_id,
+        strategy_version_id=body.strategy_version_id,
+        symbol_id=body.symbol_id,
+        timeframe=body.timeframe,
+        total_windows=result.summary.total_windows,
+    )
+
+    return WalkForwardValidationResponse(
+        strategy_version_id=body.strategy_version_id,
+        symbol_id=body.symbol_id,
+        timeframe=body.timeframe,
+        start_time=start_dt,
+        end_time=end_dt,
+        initial_equity=body.initial_equity,
+        window_bars=body.window_bars,
+        step_bars=body.step_bars,
+        windows=[
+            WalkForwardWindowOut(
+                window_index=window.window_index,
+                start_time=window.start_time,
+                end_time=window.end_time,
+                num_candles=window.num_candles,
+                num_trades=window.num_trades,
+                initial_equity=window.initial_equity,
+                final_equity=window.final_equity,
+                total_return_pct=window.total_return_pct,
+                max_drawdown_pct=window.max_drawdown_pct,
+                sharpe_ratio=window.sharpe_ratio,
+            )
+            for window in result.windows
+        ],
+        summary=WalkForwardSummaryOut(
+            total_windows=result.summary.total_windows,
+            window_bars=result.summary.window_bars,
+            step_bars=result.summary.step_bars,
+            profitable_windows=result.summary.profitable_windows,
+            profitable_window_pct=result.summary.profitable_window_pct,
+            avg_total_return_pct=result.summary.avg_total_return_pct,
+            best_total_return_pct=result.summary.best_total_return_pct,
+            worst_total_return_pct=result.summary.worst_total_return_pct,
+            avg_max_drawdown_pct=result.summary.avg_max_drawdown_pct,
+            avg_sharpe_ratio=result.summary.avg_sharpe_ratio,
+        ),
     )
 
 
