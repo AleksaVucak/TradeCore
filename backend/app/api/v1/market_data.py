@@ -4,7 +4,7 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.dependencies import get_db, get_current_user_id
@@ -13,6 +13,7 @@ from app.models.fetch_job import FetchJob, FetchJobStatus
 from app.models.symbol import Symbol
 from app.schemas.market_data import (
     CandleResponse,
+    CoverageRangeResponse,
     FetchJobResponse,
     FetchJobStatusResponse,
     FetchRequest,
@@ -169,6 +170,43 @@ def list_fetch_jobs(
             completed_at=job.completed_at,
         )
         for job in jobs
+    ]
+
+
+@router.get("/coverage", response_model=list[CoverageRangeResponse])
+def get_market_data_coverage(
+    db: Session = Depends(get_db),
+    _user_id: int = Depends(get_current_user_id),
+    symbol_id: int | None = Query(None, description="Optional symbol id filter"),
+    timeframe: str | None = Query(None, description="Optional timeframe filter"),
+):
+    """Return available candle coverage windows grouped by symbol and timeframe."""
+    q = (
+        select(
+            Candle.symbol_id,
+            Candle.timeframe,
+            func.min(Candle.timestamp).label("start_date"),
+            func.max(Candle.timestamp).label("end_date"),
+            func.count(Candle.id).label("candle_count"),
+        )
+        .group_by(Candle.symbol_id, Candle.timeframe)
+        .order_by(Candle.symbol_id, Candle.timeframe)
+    )
+    if symbol_id is not None:
+        q = q.where(Candle.symbol_id == symbol_id)
+    if timeframe is not None:
+        q = q.where(Candle.timeframe == timeframe)
+
+    rows = db.execute(q).all()
+    return [
+        CoverageRangeResponse(
+            symbol_id=row.symbol_id,
+            timeframe=row.timeframe,
+            start_date=row.start_date,
+            end_date=row.end_date,
+            candle_count=row.candle_count,
+        )
+        for row in rows
     ]
 
 

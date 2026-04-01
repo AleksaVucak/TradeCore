@@ -100,3 +100,13 @@ class FetchJobStatusResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class CoverageRangeResponse(BaseModel):
+    """Coverage window for a symbol/timeframe candle set."""
+
+    symbol_id: int
+    timeframe: str
+    start_date: datetime
+    end_date: datetime
+    candle_count: int

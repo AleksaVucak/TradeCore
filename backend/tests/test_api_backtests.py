@@ -729,6 +729,13 @@ def _create_candles_for_run(
     return candles
 
 
+def _create_test_symbol(db: Session, symbol: str) -> Symbol:
+    row = Symbol(symbol=symbol, base_asset=symbol[:3], quote_asset="USD", is_active=True)
+    db.add(row)
+    db.flush()
+    return row
+
+
 class TestGetBacktestBenchmark:
     """Phase 12.4: GET /backtests/{id}/benchmark."""
 
@@ -751,12 +758,12 @@ class TestGetBacktestBenchmark:
         test_user: User,
         auth_headers: dict,
         strategy_and_version,
-        btc_symbol: Symbol,
     ) -> None:
         _, v = strategy_and_version
-        run = _create_completed_run(db_session, test_user, v, btc_symbol)
+        benchmark_symbol = _create_test_symbol(db_session, "BNCHBTCA")
+        run = _create_completed_run(db_session, test_user, v, benchmark_symbol)
         _create_candles_for_run(
-            db_session, btc_symbol, run.timeframe, run.start_time, run.end_time
+            db_session, benchmark_symbol, run.timeframe, run.start_time, run.end_time
         )
         resp = client.get(
             f"/api/v1/backtests/{run.id}/benchmark", headers=auth_headers
@@ -777,11 +784,11 @@ class TestGetBacktestBenchmark:
         test_user: User,
         auth_headers: dict,
         strategy_and_version,
-        btc_symbol: Symbol,
     ) -> None:
         """No candles: endpoint returns empty curve but still 200."""
         _, v = strategy_and_version
-        run = _create_completed_run(db_session, test_user, v, btc_symbol)
+        benchmark_symbol = _create_test_symbol(db_session, "BNCHBTCB")
+        run = _create_completed_run(db_session, test_user, v, benchmark_symbol)
         resp = client.get(
             f"/api/v1/backtests/{run.id}/benchmark", headers=auth_headers
         )
