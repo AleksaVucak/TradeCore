@@ -47,6 +47,14 @@ export type BacktestRunDetail = {
   equity_curve: EquityPointOut[];
   metrics: Record<string, number> | null;
 };
+export type CreateBacktestRequest = {
+  strategy_version_id: number;
+  symbol_id: number;
+  timeframe: string;
+  start_time: string;
+  end_time: string;
+  initial_equity: number;
+};
 export type StrategyListItem = { id: number; name: string; strategy_type: string; created_at: string };
 
 export type StrategyVersion = {
@@ -121,6 +129,8 @@ export type BenchmarkResponse = {
 
 export const backtestsApi = {
   list: (token: string) => api.get<BacktestRunListItem[]>("/api/v1/backtests", token),
+  create: (token: string, body: CreateBacktestRequest) =>
+    api.post<BacktestRunDetail>("/api/v1/backtests", body, token),
   get: (token: string, runId: string) =>
     api.get<BacktestRunDetail>(`/api/v1/backtests/${runId}`, token),
   getTrades: (token: string, runId: string) =>

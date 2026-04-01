@@ -187,6 +187,16 @@ export default function StrategyDetailPage() {
             {strategy ? strategy.name : `Strategy ${idSegment}`}
           </h1>
         </div>
+        {!!strategyId && !Number.isNaN(strategyId) && (
+          <div className="mt-3">
+            <Link
+              href={`/backtests/new?strategyId=${strategyId}`}
+              className="text-sm font-medium text-primary underline-offset-4 hover:underline"
+            >
+              Run backtest with this strategy
+            </Link>
+          </div>
+        )}
       </header>
       <main className="container mx-auto max-w-5xl px-6 py-8 space-y-6">
         {!hasValidParams && (

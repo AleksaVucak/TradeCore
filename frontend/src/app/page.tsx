@@ -112,7 +112,7 @@ export default function Home() {
             </CardHeader>
             <CardContent className="flex gap-2 flex-wrap">
               <Link
-                href="/backtests"
+                href="/backtests/new"
                 className="text-sm font-medium text-primary underline-offset-4 hover:underline"
               >
                 New backtest

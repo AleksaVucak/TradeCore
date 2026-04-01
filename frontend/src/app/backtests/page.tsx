@@ -92,10 +92,10 @@ export default function BacktestsPage() {
             </p>
           </div>
           <Link
-            href="/runs/compare"
+            href="/backtests/new"
             className="inline-flex items-center justify-center rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
           >
-            Compare runs
+            New backtest
           </Link>
         </div>
       </header>
@@ -140,10 +140,17 @@ export default function BacktestsPage() {
             <CardHeader>
               <CardTitle className="text-base">No runs yet</CardTitle>
               <CardDescription>
-                Create a backtest from the dashboard or via the API to see run
-                history here.
+                Create a backtest from the app to see run history here.
               </CardDescription>
             </CardHeader>
+            <CardContent>
+              <Link
+                href="/backtests/new"
+                className="text-sm font-medium text-primary underline-offset-4 hover:underline"
+              >
+                Start a new backtest
+              </Link>
+            </CardContent>
           </Card>
         ) : (
           <Card>
