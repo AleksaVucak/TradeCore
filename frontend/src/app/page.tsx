@@ -119,6 +119,13 @@ export default function Home() {
               </Link>
               <span className="text-muted-foreground">·</span>
               <Link
+                href="/backtests/walk-forward"
+                className="text-sm font-medium text-primary underline-offset-4 hover:underline"
+              >
+                Walk-forward validation
+              </Link>
+              <span className="text-muted-foreground">·</span>
+              <Link
                 href="/strategies"
                 className="text-sm font-medium text-primary underline-offset-4 hover:underline"
               >

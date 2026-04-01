@@ -91,12 +91,20 @@ export default function BacktestsPage() {
               Table of backtest runs: status, symbol, strategy, return, drawdown
             </p>
           </div>
-          <Link
-            href="/backtests/new"
-            className="inline-flex items-center justify-center rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
-          >
-            New backtest
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href="/backtests/walk-forward"
+              className="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-colors"
+            >
+              Walk-forward
+            </Link>
+            <Link
+              href="/backtests/new"
+              className="inline-flex items-center justify-center rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
+            >
+              New backtest
+            </Link>
+          </div>
         </div>
       </header>
       <main className="container mx-auto max-w-5xl px-6 py-8">
@@ -140,16 +148,25 @@ export default function BacktestsPage() {
             <CardHeader>
               <CardTitle className="text-base">No runs yet</CardTitle>
               <CardDescription>
-                Create a backtest from the app to see run history here.
+                Create a backtest or run walk-forward validation from the app to start analyzing a
+                strategy.
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <Link
-                href="/backtests/new"
-                className="text-sm font-medium text-primary underline-offset-4 hover:underline"
-              >
-                Start a new backtest
-              </Link>
+              <div className="flex flex-wrap gap-4">
+                <Link
+                  href="/backtests/new"
+                  className="text-sm font-medium text-primary underline-offset-4 hover:underline"
+                >
+                  Start a new backtest
+                </Link>
+                <Link
+                  href="/backtests/walk-forward"
+                  className="text-sm font-medium text-primary underline-offset-4 hover:underline"
+                >
+                  Run walk-forward validation
+                </Link>
+              </div>
             </CardContent>
           </Card>
         ) : (

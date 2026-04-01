@@ -188,12 +188,18 @@ export default function StrategyDetailPage() {
           </h1>
         </div>
         {!!strategyId && !Number.isNaN(strategyId) && (
-          <div className="mt-3">
+          <div className="mt-3 flex flex-wrap gap-4">
             <Link
               href={`/backtests/new?strategyId=${strategyId}`}
               className="text-sm font-medium text-primary underline-offset-4 hover:underline"
             >
               Run backtest with this strategy
+            </Link>
+            <Link
+              href={`/backtests/walk-forward?strategyId=${strategyId}`}
+              className="text-sm font-medium text-primary underline-offset-4 hover:underline"
+            >
+              Run walk-forward validation
             </Link>
           </div>
         )}

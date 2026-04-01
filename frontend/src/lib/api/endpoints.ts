@@ -55,6 +55,52 @@ export type CreateBacktestRequest = {
   end_time: string;
   initial_equity: number;
 };
+export type WalkForwardValidationRequest = {
+  strategy_version_id: number;
+  symbol_id: number;
+  timeframe: string;
+  start_time: string;
+  end_time: string;
+  initial_equity: number;
+  window_bars: number;
+  step_bars: number;
+};
+export type WalkForwardWindow = {
+  window_index: number;
+  start_time: string;
+  end_time: string;
+  num_candles: number;
+  num_trades: number;
+  initial_equity: number;
+  final_equity: number;
+  total_return_pct: number;
+  max_drawdown_pct: number;
+  sharpe_ratio: number;
+};
+export type WalkForwardSummary = {
+  total_windows: number;
+  window_bars: number;
+  step_bars: number;
+  profitable_windows: number;
+  profitable_window_pct: number;
+  avg_total_return_pct: number;
+  best_total_return_pct: number;
+  worst_total_return_pct: number;
+  avg_max_drawdown_pct: number;
+  avg_sharpe_ratio: number;
+};
+export type WalkForwardValidationResponse = {
+  strategy_version_id: number;
+  symbol_id: number;
+  timeframe: string;
+  start_time: string;
+  end_time: string;
+  initial_equity: number;
+  window_bars: number;
+  step_bars: number;
+  windows: WalkForwardWindow[];
+  summary: WalkForwardSummary;
+};
 export type StrategyListItem = { id: number; name: string; strategy_type: string; created_at: string };
 
 export type StrategyVersion = {
@@ -131,6 +177,8 @@ export const backtestsApi = {
   list: (token: string) => api.get<BacktestRunListItem[]>("/api/v1/backtests", token),
   create: (token: string, body: CreateBacktestRequest) =>
     api.post<BacktestRunDetail>("/api/v1/backtests", body, token),
+  runWalkForward: (token: string, body: WalkForwardValidationRequest) =>
+    api.post<WalkForwardValidationResponse>("/api/v1/backtests/walk-forward", body, token),
   get: (token: string, runId: string) =>
     api.get<BacktestRunDetail>(`/api/v1/backtests/${runId}`, token),
   getTrades: (token: string, runId: string) =>
