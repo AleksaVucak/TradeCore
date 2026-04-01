@@ -173,6 +173,49 @@ export type CandleResponse = {
   volume: number;
 };
 
+export type CoverageRangeResponse = {
+  symbol_id: number;
+  timeframe: string;
+  start_date: string;
+  end_date: string;
+  candle_count: number;
+};
+
+export type FetchRequest = {
+  symbol_id: number;
+  timeframe: string;
+  start_date: string;
+  end_date: string;
+};
+
+export type FetchJobResponse = {
+  job_id: string;
+  status: string;
+  symbol_id: number;
+  timeframe: string;
+  start_date: string;
+  end_date: string;
+  created_at: string;
+  message: string;
+};
+
+export type FetchJobStatusResponse = {
+  job_id: string;
+  status: string;
+  symbol_id: number;
+  timeframe: string;
+  start_date: string;
+  end_date: string;
+  total_chunks: number;
+  completed_chunks: number;
+  candles_fetched: number;
+  progress_pct: number;
+  error_message: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+};
+
 export type RegimeLabelOut = {
   timestamp: string;
   regime: string;
@@ -260,6 +303,36 @@ export const marketDataApi = {
     token: string,
     body: { symbol_id: number; timeframe: string; start_date: string; end_date: string }
   ) => api.post<IngestResponse>("/api/v1/market-data/ingest", body, token),
+  fetch: (token: string, body: FetchRequest) =>
+    api.post<FetchJobResponse>("/api/v1/market-data/fetch", body, token),
+  getFetchJob: (token: string, jobId: string) =>
+    api.get<FetchJobStatusResponse>(`/api/v1/market-data/fetch/${jobId}`, token),
+  listFetchJobs: (
+    token: string,
+    params?: { status?: string; limit?: number }
+  ) => {
+    const search = new URLSearchParams();
+    if (params?.status) search.set("status", params.status);
+    if (params?.limit != null) search.set("limit", String(params.limit));
+    const qs = search.toString();
+    return api.get<FetchJobStatusResponse[]>(
+      `/api/v1/market-data/fetch${qs ? `?${qs}` : ""}`,
+      token
+    );
+  },
+  coverage: (
+    token: string,
+    params?: { symbol_id?: number; timeframe?: string }
+  ) => {
+    const search = new URLSearchParams();
+    if (params?.symbol_id != null) search.set("symbol_id", String(params.symbol_id));
+    if (params?.timeframe) search.set("timeframe", params.timeframe);
+    const qs = search.toString();
+    return api.get<CoverageRangeResponse[]>(
+      `/api/v1/market-data/coverage${qs ? `?${qs}` : ""}`,
+      token
+    );
+  },
   candles: (
     token: string,
     params: { symbol_id: number; timeframe: string; start: string; end: string; limit?: number }
