@@ -131,6 +131,84 @@ def _create_completed_run(
     return run
 
 
+def _create_completed_run_two_closed_pnls(
+    db: Session,
+    user: User,
+    version: StrategyVersion,
+    symbol: Symbol,
+) -> BacktestRun:
+    """Completed run with two closed sells (P&L) for Monte Carlo (Phase 14.3)."""
+    run = BacktestRun(
+        user_id=user.id,
+        strategy_version_id=version.id,
+        symbol_id=symbol.id,
+        timeframe="1h",
+        start_time=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        end_time=datetime(2025, 6, 1, tzinfo=timezone.utc),
+        status=BacktestRunStatus.COMPLETED,
+        run_options={"initial_equity": 10_000.0},
+    )
+    db.add(run)
+    db.flush()
+    db.add_all(
+        [
+            Trade(
+                backtest_run_id=run.id,
+                timestamp=datetime(2025, 1, 10, tzinfo=timezone.utc),
+                side="buy",
+                price=40000.0,
+                quantity=0.1,
+                fee=4.0,
+                slippage=0.0,
+                pnl=None,
+            ),
+            Trade(
+                backtest_run_id=run.id,
+                timestamp=datetime(2025, 1, 11, tzinfo=timezone.utc),
+                side="sell",
+                price=41000.0,
+                quantity=0.1,
+                fee=4.1,
+                slippage=0.0,
+                pnl=90.0,
+            ),
+            Trade(
+                backtest_run_id=run.id,
+                timestamp=datetime(2025, 2, 10, tzinfo=timezone.utc),
+                side="buy",
+                price=41000.0,
+                quantity=0.1,
+                fee=4.1,
+                slippage=0.0,
+                pnl=None,
+            ),
+            Trade(
+                backtest_run_id=run.id,
+                timestamp=datetime(2025, 2, 20, tzinfo=timezone.utc),
+                side="sell",
+                price=42000.0,
+                quantity=0.1,
+                fee=4.2,
+                slippage=0.0,
+                pnl=75.5,
+            ),
+        ]
+    )
+    db.add(
+        MetricSnapshot(
+            backtest_run_id=run.id,
+            metrics={
+                "total_return_pct": 2.5,
+                "max_drawdown_pct": 1.0,
+                "num_trades": 4,
+                "final_equity": 10_250.0,
+            },
+        )
+    )
+    db.flush()
+    return run
+
+
 class TestListBacktests:
     def test_list_own_runs(
         self,
@@ -1001,4 +1079,182 @@ class TestWalkForwardValidation:
                 "step_bars": 12,
             },
         )
+        assert resp.status_code == 401
+
+
+class TestMonteCarlo:
+    """Phase 14.3: POST /backtests/{id}/monte-carlo."""
+
+    _EXPECTED_KEYS = frozenset(
+        {
+            "run_id",
+            "method",
+            "num_simulations",
+            "num_closed_trades",
+            "initial_equity",
+            "seed",
+            "mean_final_equity",
+            "median_final_equity",
+            "p5_final_equity",
+            "p95_final_equity",
+            "best_final_equity",
+            "worst_final_equity",
+            "mean_total_return_pct",
+            "median_total_return_pct",
+            "p5_total_return_pct",
+            "p95_total_return_pct",
+            "best_total_return_pct",
+            "worst_total_return_pct",
+            "mean_max_drawdown_pct",
+            "median_max_drawdown_pct",
+            "p95_max_drawdown_pct",
+            "worst_max_drawdown_pct",
+            "probability_profit_pct",
+            "probability_loss_pct",
+            "probability_drawdown_gt_10_pct",
+            "original_total_return_pct",
+            "percentile_equity_band",
+        }
+    )
+
+    def test_monte_carlo_completed_200(
+        self,
+        client: TestClient,
+        db_session: Session,
+        test_user: User,
+        auth_headers: dict,
+        strategy_and_version,
+        btc_symbol: Symbol,
+    ) -> None:
+        _, v = strategy_and_version
+        run = _create_completed_run_two_closed_pnls(db_session, test_user, v, btc_symbol)
+        resp = client.post(
+            f"/api/v1/backtests/{run.id}/monte-carlo",
+            json={"num_simulations": 100, "method": "bootstrap", "seed": 7},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert set(data.keys()) == self._EXPECTED_KEYS
+        assert data["run_id"] == str(run.id)
+        assert data["method"] == "bootstrap"
+        assert data["num_simulations"] == 100
+        assert data["num_closed_trades"] == 2
+        assert data["initial_equity"] == 10_000.0
+        assert data["seed"] == 7
+        assert data["original_total_return_pct"] == 2.5
+        assert len(data["percentile_equity_band"]) >= 2
+
+    def test_monte_carlo_shuffle(
+        self,
+        client: TestClient,
+        db_session: Session,
+        test_user: User,
+        auth_headers: dict,
+        strategy_and_version,
+        btc_symbol: Symbol,
+    ) -> None:
+        _, v = strategy_and_version
+        run = _create_completed_run_two_closed_pnls(db_session, test_user, v, btc_symbol)
+        resp = client.post(
+            f"/api/v1/backtests/{run.id}/monte-carlo",
+            json={"num_simulations": 80, "method": "shuffle", "seed": 1},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["method"] == "shuffle"
+
+    def test_monte_carlo_too_few_closed_trades_400(
+        self,
+        client: TestClient,
+        db_session: Session,
+        test_user: User,
+        auth_headers: dict,
+        strategy_and_version,
+        btc_symbol: Symbol,
+    ) -> None:
+        _, v = strategy_and_version
+        run = _create_completed_run(db_session, test_user, v, btc_symbol)
+        resp = client.post(
+            f"/api/v1/backtests/{run.id}/monte-carlo",
+            json={"num_simulations": 100},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "2" in resp.json()["detail"] or "closed" in resp.json()["detail"].lower()
+
+    def test_monte_carlo_pending_400(
+        self,
+        client: TestClient,
+        db_session: Session,
+        test_user: User,
+        auth_headers: dict,
+        strategy_and_version,
+        btc_symbol: Symbol,
+    ) -> None:
+        _, v = strategy_and_version
+        run = BacktestRun(
+            user_id=test_user.id,
+            strategy_version_id=v.id,
+            symbol_id=btc_symbol.id,
+            timeframe="1h",
+            start_time=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            end_time=datetime(2025, 6, 1, tzinfo=timezone.utc),
+            status=BacktestRunStatus.PENDING,
+        )
+        db_session.add(run)
+        db_session.flush()
+        resp = client.post(
+            f"/api/v1/backtests/{run.id}/monte-carlo",
+            json={},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "completed" in resp.json()["detail"].lower()
+
+    def test_monte_carlo_not_found_404(
+        self, client: TestClient, auth_headers: dict
+    ) -> None:
+        fake_id = str(uuid.uuid4())
+        resp = client.post(
+            f"/api/v1/backtests/{fake_id}/monte-carlo",
+            json={"num_simulations": 100},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 404
+
+    def test_monte_carlo_other_user_404(
+        self,
+        client: TestClient,
+        db_session: Session,
+        other_user: User,
+        auth_headers: dict,
+        btc_symbol: Symbol,
+    ) -> None:
+        s = Strategy(
+            user_id=other_user.id,
+            name="Other MC",
+            strategy_type="rsi_ma",
+        )
+        db_session.add(s)
+        db_session.flush()
+        v = StrategyVersion(
+            strategy_id=s.id,
+            version_number=1,
+            config=VALID_CONFIG,
+            is_active=True,
+        )
+        db_session.add(v)
+        db_session.flush()
+        run = _create_completed_run_two_closed_pnls(db_session, other_user, v, btc_symbol)
+        resp = client.post(
+            f"/api/v1/backtests/{run.id}/monte-carlo",
+            json={"num_simulations": 50},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 404
+
+    def test_monte_carlo_requires_auth(self, client: TestClient) -> None:
+        fake_id = str(uuid.uuid4())
+        resp = client.post(f"/api/v1/backtests/{fake_id}/monte-carlo", json={})
         assert resp.status_code == 401

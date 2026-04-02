@@ -1,7 +1,7 @@
 import uuid
 from datetime import timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, status
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.core.logging import get_logger
@@ -17,6 +17,9 @@ from app.schemas.backtest import (
     BenchmarkResponse,
     CreateBacktestRequest,
     EquityPointOut,
+    MonteCarloPercentilePointOut,
+    MonteCarloRequest,
+    MonteCarloResponse,
     RiskMetricsResponse,
     TradeOut,
     WalkForwardSummaryOut,
@@ -27,6 +30,7 @@ from app.schemas.backtest import (
 from app.schemas.strategy_config import validate_strategy_config
 from app.services.backtest import BacktestCandle, run_walk_forward_validation
 from app.services.backtest.benchmark import compute_benchmark
+from app.services.backtest.monte_carlo import compute_monte_carlo
 from app.services.backtest.risk_metrics import compute_risk_metrics
 from app.tasks.backtests import run_backtest_task
 
@@ -596,6 +600,126 @@ def get_backtest_benchmark(
         total_return_pct=result.total_return_pct,
         strategy_return_pct=strategy_return_pct,
         alpha_pct=result.alpha_pct,
+    )
+
+
+@router.post("/{run_id}/monte-carlo", response_model=MonteCarloResponse)
+def post_backtest_monte_carlo(
+    run_id: str,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+    body: MonteCarloRequest = Body(default_factory=MonteCarloRequest),
+):
+    """
+    Monte Carlo robustness analysis for a completed backtest (Phase 14.3).
+
+    Resamples closed-trade P&L sequences (bootstrap or shuffle) to estimate how
+    fragile the outcome is to trade ordering or resampled outcomes.
+    """
+    run = _get_run_for_user(db, run_id, user_id)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Backtest run not found",
+        )
+
+    run = (
+        db.query(BacktestRun)
+        .options(selectinload(BacktestRun.trades), joinedload(BacktestRun.metrics))
+        .get(run.id)
+    )
+
+    if run.status != "completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Monte Carlo analysis only available for completed runs "
+                f"(current status: {run.status})"
+            ),
+        )
+
+    sell_trades = sorted(
+        [t for t in run.trades if t.side == "sell" and t.pnl is not None],
+        key=lambda t: t.timestamp,
+    )
+    closed_pnls = [float(t.pnl) for t in sell_trades if t.pnl is not None]
+
+    if len(closed_pnls) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Monte Carlo requires at least 2 closed trades with realized P&L",
+        )
+
+    initial_equity = 10_000.0
+    if run.run_options and isinstance(run.run_options, dict):
+        initial_equity = float(run.run_options.get("initial_equity", 10_000.0))
+
+    original_tr_pct: float | None = None
+    if run.metrics and isinstance(run.metrics.metrics, dict):
+        v = run.metrics.metrics.get("total_return_pct")
+        if v is not None:
+            original_tr_pct = float(v)
+
+    try:
+        result = compute_monte_carlo(
+            closed_trade_pnls=closed_pnls,
+            initial_equity=initial_equity,
+            num_simulations=body.num_simulations,
+            method=body.method,
+            seed=body.seed,
+            original_total_return_pct=original_tr_pct,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    logger.info(
+        "monte_carlo_computed",
+        run_id=run_id,
+        user_id=user_id,
+        method=body.method,
+        num_simulations=body.num_simulations,
+        num_closed_trades=len(closed_pnls),
+    )
+
+    return MonteCarloResponse(
+        run_id=run.id,
+        method=result.method,
+        num_simulations=result.num_simulations,
+        num_closed_trades=result.num_closed_trades,
+        initial_equity=result.initial_equity,
+        seed=result.seed,
+        mean_final_equity=result.mean_final_equity,
+        median_final_equity=result.median_final_equity,
+        p5_final_equity=result.p5_final_equity,
+        p95_final_equity=result.p95_final_equity,
+        best_final_equity=result.best_final_equity,
+        worst_final_equity=result.worst_final_equity,
+        mean_total_return_pct=result.mean_total_return_pct,
+        median_total_return_pct=result.median_total_return_pct,
+        p5_total_return_pct=result.p5_total_return_pct,
+        p95_total_return_pct=result.p95_total_return_pct,
+        best_total_return_pct=result.best_total_return_pct,
+        worst_total_return_pct=result.worst_total_return_pct,
+        mean_max_drawdown_pct=result.mean_max_drawdown_pct,
+        median_max_drawdown_pct=result.median_max_drawdown_pct,
+        p95_max_drawdown_pct=result.p95_max_drawdown_pct,
+        worst_max_drawdown_pct=result.worst_max_drawdown_pct,
+        probability_profit_pct=result.probability_profit_pct,
+        probability_loss_pct=result.probability_loss_pct,
+        probability_drawdown_gt_10_pct=result.probability_drawdown_gt_10_pct,
+        original_total_return_pct=result.original_total_return_pct,
+        percentile_equity_band=[
+            MonteCarloPercentilePointOut(
+                step_index=p.step_index,
+                p5_equity=p.p5_equity,
+                p50_equity=p.p50_equity,
+                p95_equity=p.p95_equity,
+            )
+            for p in result.percentile_equity_band
+        ],
     )
 
 

@@ -173,6 +173,50 @@ export type BenchmarkResponse = {
   alpha_pct: number;
 };
 
+/** Phase 14.3: POST /backtests/{id}/monte-carlo */
+export type MonteCarloRequest = {
+  num_simulations?: number;
+  method?: "bootstrap" | "shuffle";
+  seed?: number | null;
+};
+
+export type MonteCarloPercentilePointOut = {
+  step_index: number;
+  p5_equity: number;
+  p50_equity: number;
+  p95_equity: number;
+};
+
+export type MonteCarloResponse = {
+  run_id: string;
+  method: "bootstrap" | "shuffle";
+  num_simulations: number;
+  num_closed_trades: number;
+  initial_equity: number;
+  seed: number | null;
+  mean_final_equity: number;
+  median_final_equity: number;
+  p5_final_equity: number;
+  p95_final_equity: number;
+  best_final_equity: number;
+  worst_final_equity: number;
+  mean_total_return_pct: number;
+  median_total_return_pct: number;
+  p5_total_return_pct: number;
+  p95_total_return_pct: number;
+  best_total_return_pct: number;
+  worst_total_return_pct: number;
+  mean_max_drawdown_pct: number;
+  median_max_drawdown_pct: number;
+  p95_max_drawdown_pct: number;
+  worst_max_drawdown_pct: number;
+  probability_profit_pct: number;
+  probability_loss_pct: number;
+  probability_drawdown_gt_10_pct: number;
+  original_total_return_pct: number | null;
+  percentile_equity_band: MonteCarloPercentilePointOut[];
+};
+
 export const backtestsApi = {
   list: (token: string) => api.get<BacktestRunListItem[]>("/api/v1/backtests", token),
   create: (token: string, body: CreateBacktestRequest) =>
@@ -191,6 +235,16 @@ export const backtestsApi = {
     api.get<RiskMetricsResponse>(`/api/v1/backtests/${runId}/risk-metrics`, token),
   getBenchmark: (token: string, runId: string) =>
     api.get<BenchmarkResponse>(`/api/v1/backtests/${runId}/benchmark`, token),
+  postMonteCarlo: (
+    token: string,
+    runId: string,
+    body: MonteCarloRequest = {}
+  ) =>
+    api.post<MonteCarloResponse>(
+      `/api/v1/backtests/${runId}/monte-carlo`,
+      body,
+      token
+    ),
 };
 
 export const strategiesApi = {

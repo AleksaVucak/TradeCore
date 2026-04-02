@@ -39,6 +39,7 @@ import {
   ComposedChart,
   Legend,
 } from "recharts";
+import { MonteCarloCard } from "@/components/MonteCarloCard";
 import { RiskMetricsCard } from "@/components/RiskMetricsCard";
 
 function formatPct(value: number | null | undefined): string {
@@ -261,6 +262,11 @@ export function RunDetailClient({ runId }: { runId: string }) {
   }, [regimeLabels]);
 
   const trades = run?.trades;
+  const closedTradeCount = useMemo(() => {
+    if (!trades || trades.length === 0) return 0;
+    return trades.filter((t) => t.side === "sell" && t.pnl != null).length;
+  }, [trades]);
+
   const tradeMarkers: TradeMarker[] = useMemo(() => {
     if (!trades || trades.length === 0) return [];
     return trades.map((t) => ({
@@ -512,6 +518,13 @@ export function RunDetailClient({ runId }: { runId: string }) {
 
       {/* Risk metrics card (Phase 12.3) */}
       <RiskMetricsCard runId={runId} runStatus={run.status} />
+
+      {/* Monte Carlo robustness (Phase 14.3) */}
+      <MonteCarloCard
+        runId={runId}
+        runStatus={run.status}
+        closedTradeCount={closedTradeCount}
+      />
 
       {/* Equity curve chart with benchmark (Phase 12.4) */}
       <Card className="mt-6">

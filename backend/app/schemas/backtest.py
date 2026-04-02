@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
@@ -204,3 +205,81 @@ class RiskMetricsResponse(BaseModel):
     # Equity
     initial_equity: float = Field(..., description="Starting equity")
     final_equity: float = Field(..., description="Ending equity")
+
+
+class MonteCarloRequest(BaseModel):
+    """Optional parameters for POST /backtests/{id}/monte-carlo (Phase 14.3)."""
+
+    num_simulations: int = Field(
+        500,
+        ge=50,
+        le=10_000,
+        description="Number of simulated paths",
+    )
+    method: Literal["bootstrap", "shuffle"] = Field(
+        "bootstrap",
+        description="bootstrap: resample trades with replacement; shuffle: random order",
+    )
+    seed: int | None = Field(
+        None,
+        description="Optional RNG seed for reproducible results",
+    )
+
+
+class MonteCarloPercentilePointOut(BaseModel):
+    step_index: int = Field(..., description="Trade step (0 = initial equity)")
+    p5_equity: float
+    p50_equity: float
+    p95_equity: float
+
+
+class MonteCarloResponse(BaseModel):
+    """Monte Carlo robustness summary for a completed backtest (Phase 14.3)."""
+
+    run_id: UUID
+    method: Literal["bootstrap", "shuffle"]
+    num_simulations: int
+    num_closed_trades: int
+    initial_equity: float
+    seed: int | None = None
+
+    mean_final_equity: float
+    median_final_equity: float
+    p5_final_equity: float
+    p95_final_equity: float
+    best_final_equity: float
+    worst_final_equity: float
+
+    mean_total_return_pct: float
+    median_total_return_pct: float
+    p5_total_return_pct: float
+    p95_total_return_pct: float
+    best_total_return_pct: float
+    worst_total_return_pct: float
+
+    mean_max_drawdown_pct: float
+    median_max_drawdown_pct: float
+    p95_max_drawdown_pct: float
+    worst_max_drawdown_pct: float
+
+    probability_profit_pct: float = Field(
+        ...,
+        description="Percent of simulations ending above initial equity",
+    )
+    probability_loss_pct: float = Field(
+        ...,
+        description="Percent of simulations ending below initial equity",
+    )
+    probability_drawdown_gt_10_pct: float = Field(
+        ...,
+        description="Percent of simulations with max drawdown over 10%",
+    )
+
+    original_total_return_pct: float | None = Field(
+        None,
+        description="Actual run total return % from metrics (if available)",
+    )
+    percentile_equity_band: list[MonteCarloPercentilePointOut] = Field(
+        default_factory=list,
+        description="P5/P50/P95 equity at each step (subsampled if many trades)",
+    )
