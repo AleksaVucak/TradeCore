@@ -233,8 +233,29 @@ class MonteCarloPercentilePointOut(BaseModel):
     p95_equity: float
 
 
+class MonteCarloHistogramBinOut(BaseModel):
+    """One histogram bin for simulated outcomes (Phase 14.4)."""
+
+    bin_start: float = Field(..., description="Inclusive bin lower edge")
+    bin_end: float = Field(..., description="Upper edge (last bin includes max)")
+    count: int = Field(..., ge=0, description="Number of simulations in this bin")
+
+
+class MonteCarloConfidenceIntervalsOut(BaseModel):
+    """Central percentile intervals (not parametric CI); P5–P95 ≈ 90%, P2.5–P97.5 ≈ 95%."""
+
+    return_pct_ci_90_low: float
+    return_pct_ci_90_high: float
+    return_pct_ci_95_low: float
+    return_pct_ci_95_high: float
+    final_equity_ci_90_low: float
+    final_equity_ci_90_high: float
+    final_equity_ci_95_low: float
+    final_equity_ci_95_high: float
+
+
 class MonteCarloResponse(BaseModel):
-    """Monte Carlo robustness summary for a completed backtest (Phase 14.3)."""
+    """Monte Carlo robustness summary for a completed backtest (Phase 14.3–14.4)."""
 
     run_id: UUID
     method: Literal["bootstrap", "shuffle"]
@@ -282,4 +303,16 @@ class MonteCarloResponse(BaseModel):
     percentile_equity_band: list[MonteCarloPercentilePointOut] = Field(
         default_factory=list,
         description="P5/P50/P95 equity at each step (subsampled if many trades)",
+    )
+    histogram_return_pct: list[MonteCarloHistogramBinOut] = Field(
+        default_factory=list,
+        description="Histogram of simulated total return % across runs",
+    )
+    histogram_final_equity: list[MonteCarloHistogramBinOut] = Field(
+        default_factory=list,
+        description="Histogram of simulated final equity across runs",
+    )
+    confidence_intervals: MonteCarloConfidenceIntervalsOut = Field(
+        ...,
+        description="Central interval estimates from simulation percentiles",
     )

@@ -63,3 +63,21 @@ def test_percentile_band_non_empty() -> None:
     )
     assert len(r.percentile_equity_band) >= 2
     assert r.original_total_return_pct == 0.5
+    assert sum(b.count for b in r.histogram_return_pct) == 50
+    assert sum(b.count for b in r.histogram_final_equity) == 50
+    assert r.confidence_intervals.return_pct_ci_90_low == r.p5_total_return_pct
+    assert r.confidence_intervals.return_pct_ci_90_high == r.p95_total_return_pct
+
+
+def test_histogram_bins_sum_to_simulation_count() -> None:
+    r = compute_monte_carlo(
+        closed_trade_pnls=[10.0, -5.0, 3.0, 2.0],
+        initial_equity=10_000.0,
+        num_simulations=200,
+        method="bootstrap",
+        seed=1,
+        original_total_return_pct=None,
+        histogram_bins=12,
+    )
+    assert sum(b.count for b in r.histogram_return_pct) == 200
+    assert len(r.histogram_return_pct) == 12

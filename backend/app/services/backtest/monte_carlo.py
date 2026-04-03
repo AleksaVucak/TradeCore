@@ -1,8 +1,9 @@
 """
-Monte Carlo robustness analysis for completed backtests (Phase 14.3).
+Monte Carlo robustness analysis for completed backtests (Phase 14.3–14.4).
 
 Resamples closed-trade P&L sequences to estimate distribution of outcomes when
-trade order (shuffle) or trade outcomes (bootstrap) vary.
+trade order (shuffle) or trade outcomes (bootstrap) vary. Exposes histogram bins
+and central percentile intervals for API/UI consumption.
 """
 
 from __future__ import annotations
@@ -68,6 +69,63 @@ class EquityPercentilePoint:
 
 
 @dataclass(frozen=True)
+class HistogramBin:
+    bin_start: float
+    bin_end: float
+    count: int
+
+
+@dataclass(frozen=True)
+class MonteCarloConfidenceIntervals:
+    """Central percentile intervals for simulated outcomes (Phase 14.4)."""
+
+    return_pct_ci_90_low: float
+    return_pct_ci_90_high: float
+    return_pct_ci_95_low: float
+    return_pct_ci_95_high: float
+    final_equity_ci_90_low: float
+    final_equity_ci_90_high: float
+    final_equity_ci_95_low: float
+    final_equity_ci_95_high: float
+
+
+def _histogram_equal_width(
+    values: list[float],
+    num_bins: int,
+) -> list[HistogramBin]:
+    """Fixed-width histogram; includes all bins (count may be zero)."""
+    if not values or num_bins < 1:
+        return []
+    lo = min(values)
+    hi = max(values)
+    if lo == hi:
+        return [HistogramBin(bin_start=lo, bin_end=hi, count=len(values))]
+
+    width = (hi - lo) / num_bins
+    counts = [0] * num_bins
+    for v in values:
+        if v >= hi:
+            idx = num_bins - 1
+        else:
+            idx = int((v - lo) / width)
+            idx = min(max(idx, 0), num_bins - 1)
+        counts[idx] += 1
+
+    bins: list[HistogramBin] = []
+    for i in range(num_bins):
+        b_start = lo + i * width
+        b_end = hi if i == num_bins - 1 else lo + (i + 1) * width
+        bins.append(
+            HistogramBin(
+                bin_start=round(b_start, 6),
+                bin_end=round(b_end, 6),
+                count=counts[i],
+            )
+        )
+    return bins
+
+
+@dataclass(frozen=True)
 class MonteCarloResult:
     method: MonteCarloMethod
     num_simulations: int
@@ -101,6 +159,10 @@ class MonteCarloResult:
     original_total_return_pct: float | None
     percentile_equity_band: list[EquityPercentilePoint]
 
+    histogram_return_pct: list[HistogramBin]
+    histogram_final_equity: list[HistogramBin]
+    confidence_intervals: MonteCarloConfidenceIntervals
+
 
 def compute_monte_carlo(
     *,
@@ -111,6 +173,7 @@ def compute_monte_carlo(
     seed: int | None,
     original_total_return_pct: float | None,
     max_band_points: int = 200,
+    histogram_bins: int = 24,
 ) -> MonteCarloResult:
     """
     Run Monte Carlo simulations on closed-trade P&L values.
@@ -166,9 +229,27 @@ def compute_monte_carlo(
             if i < len(path):
                 step_to_values[i].append(path[i])
 
+    # Histograms use unsorted copies; keep sorted lists for percentiles
+    returns_for_hist = list(total_returns)
+    equities_for_hist = list(final_equities)
+
     final_equities.sort()
     total_returns.sort()
     max_drawdowns.sort()
+
+    ci = MonteCarloConfidenceIntervals(
+        return_pct_ci_90_low=round(_percentile_linear(total_returns, 5.0), 4),
+        return_pct_ci_90_high=round(_percentile_linear(total_returns, 95.0), 4),
+        return_pct_ci_95_low=round(_percentile_linear(total_returns, 2.5), 4),
+        return_pct_ci_95_high=round(_percentile_linear(total_returns, 97.5), 4),
+        final_equity_ci_90_low=round(_percentile_linear(final_equities, 5.0), 4),
+        final_equity_ci_90_high=round(_percentile_linear(final_equities, 95.0), 4),
+        final_equity_ci_95_low=round(_percentile_linear(final_equities, 2.5), 4),
+        final_equity_ci_95_high=round(_percentile_linear(final_equities, 97.5), 4),
+    )
+
+    hist_ret = _histogram_equal_width(returns_for_hist, histogram_bins)
+    hist_eq = _histogram_equal_width(equities_for_hist, histogram_bins)
 
     profiting = sum(1 for e in final_equities if e > initial_equity)
     losing = sum(1 for e in final_equities if e < initial_equity)
@@ -218,4 +299,7 @@ def compute_monte_carlo(
         probability_drawdown_gt_10_pct=prob_dd_10,
         original_total_return_pct=original_total_return_pct,
         percentile_equity_band=band,
+        histogram_return_pct=hist_ret,
+        histogram_final_equity=hist_eq,
+        confidence_intervals=ci,
     )

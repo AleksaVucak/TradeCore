@@ -187,6 +187,25 @@ export type MonteCarloPercentilePointOut = {
   p95_equity: number;
 };
 
+/** Phase 14.4: binned distribution for histograms */
+export type MonteCarloHistogramBinOut = {
+  bin_start: number;
+  bin_end: number;
+  count: number;
+};
+
+/** Central percentile bands over simulated outcomes (not a parametric CI). */
+export type MonteCarloConfidenceIntervalsOut = {
+  return_pct_ci_90_low: number;
+  return_pct_ci_90_high: number;
+  return_pct_ci_95_low: number;
+  return_pct_ci_95_high: number;
+  final_equity_ci_90_low: number;
+  final_equity_ci_90_high: number;
+  final_equity_ci_95_low: number;
+  final_equity_ci_95_high: number;
+};
+
 export type MonteCarloResponse = {
   run_id: string;
   method: "bootstrap" | "shuffle";
@@ -215,6 +234,9 @@ export type MonteCarloResponse = {
   probability_drawdown_gt_10_pct: number;
   original_total_return_pct: number | null;
   percentile_equity_band: MonteCarloPercentilePointOut[];
+  histogram_return_pct: MonteCarloHistogramBinOut[];
+  histogram_final_equity: MonteCarloHistogramBinOut[];
+  confidence_intervals: MonteCarloConfidenceIntervalsOut;
 };
 
 export const backtestsApi = {

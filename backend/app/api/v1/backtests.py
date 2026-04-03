@@ -17,6 +17,8 @@ from app.schemas.backtest import (
     BenchmarkResponse,
     CreateBacktestRequest,
     EquityPointOut,
+    MonteCarloConfidenceIntervalsOut,
+    MonteCarloHistogramBinOut,
     MonteCarloPercentilePointOut,
     MonteCarloRequest,
     MonteCarloResponse,
@@ -611,10 +613,11 @@ def post_backtest_monte_carlo(
     body: MonteCarloRequest = Body(default_factory=MonteCarloRequest),
 ):
     """
-    Monte Carlo robustness analysis for a completed backtest (Phase 14.3).
+    Monte Carlo robustness analysis for a completed backtest (Phase 14.3–14.4).
 
     Resamples closed-trade P&L sequences (bootstrap or shuffle) to estimate how
-    fragile the outcome is to trade ordering or resampled outcomes.
+    fragile the outcome is to trade ordering or resampled outcomes. Response
+    includes histogram bins and percentile-based central intervals for the UI.
     """
     run = _get_run_for_user(db, run_id, user_id)
     if run is None:
@@ -720,6 +723,32 @@ def post_backtest_monte_carlo(
             )
             for p in result.percentile_equity_band
         ],
+        histogram_return_pct=[
+            MonteCarloHistogramBinOut(
+                bin_start=b.bin_start,
+                bin_end=b.bin_end,
+                count=b.count,
+            )
+            for b in result.histogram_return_pct
+        ],
+        histogram_final_equity=[
+            MonteCarloHistogramBinOut(
+                bin_start=b.bin_start,
+                bin_end=b.bin_end,
+                count=b.count,
+            )
+            for b in result.histogram_final_equity
+        ],
+        confidence_intervals=MonteCarloConfidenceIntervalsOut(
+            return_pct_ci_90_low=result.confidence_intervals.return_pct_ci_90_low,
+            return_pct_ci_90_high=result.confidence_intervals.return_pct_ci_90_high,
+            return_pct_ci_95_low=result.confidence_intervals.return_pct_ci_95_low,
+            return_pct_ci_95_high=result.confidence_intervals.return_pct_ci_95_high,
+            final_equity_ci_90_low=result.confidence_intervals.final_equity_ci_90_low,
+            final_equity_ci_90_high=result.confidence_intervals.final_equity_ci_90_high,
+            final_equity_ci_95_low=result.confidence_intervals.final_equity_ci_95_low,
+            final_equity_ci_95_high=result.confidence_intervals.final_equity_ci_95_high,
+        ),
     )
 
 

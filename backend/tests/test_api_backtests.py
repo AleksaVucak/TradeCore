@@ -1083,7 +1083,7 @@ class TestWalkForwardValidation:
 
 
 class TestMonteCarlo:
-    """Phase 14.3: POST /backtests/{id}/monte-carlo."""
+    """Phase 14.3–14.4: POST /backtests/{id}/monte-carlo (histogram + CIs in JSON)."""
 
     _EXPECTED_KEYS = frozenset(
         {
@@ -1114,6 +1114,9 @@ class TestMonteCarlo:
             "probability_drawdown_gt_10_pct",
             "original_total_return_pct",
             "percentile_equity_band",
+            "histogram_return_pct",
+            "histogram_final_equity",
+            "confidence_intervals",
         }
     )
 
@@ -1144,6 +1147,12 @@ class TestMonteCarlo:
         assert data["seed"] == 7
         assert data["original_total_return_pct"] == 2.5
         assert len(data["percentile_equity_band"]) >= 2
+        hist = data["histogram_return_pct"]
+        assert len(hist) >= 1
+        assert sum(b["count"] for b in hist) == 100
+        ci = data["confidence_intervals"]
+        assert ci["return_pct_ci_90_low"] == data["p5_total_return_pct"]
+        assert ci["return_pct_ci_90_high"] == data["p95_total_return_pct"]
 
     def test_monte_carlo_shuffle(
         self,
