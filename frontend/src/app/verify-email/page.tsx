@@ -2,36 +2,46 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { authApi } from "@/lib/api/endpoints";
 
 function VerifyEmailContent() {
   const searchParams = useSearchParams();
   const token = searchParams.get("token");
+  const hasToken = Boolean(token);
 
-  const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
-  const [message, setMessage] = useState("");
-
-  const verify = useCallback(async (t: string) => {
-    try {
-      const res = await authApi.verifyEmail(t);
-      setMessage(res.message);
-      setStatus("success");
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Verification failed.");
-      setStatus("error");
-    }
-  }, []);
+  const [status, setStatus] = useState<"loading" | "success" | "error">(() =>
+    hasToken ? "loading" : "error",
+  );
+  const [message, setMessage] = useState(() =>
+    hasToken ? "" : "No verification token provided.",
+  );
 
   useEffect(() => {
-    if (!token) {
-      setMessage("No verification token provided.");
-      setStatus("error");
-      return;
-    }
-    verify(token);
-  }, [token, verify]);
+    if (!token) return;
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const res = await authApi.verifyEmail(token);
+        if (!cancelled) {
+          setMessage(res.message);
+          setStatus("success");
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setMessage(err instanceof Error ? err.message : "Verification failed.");
+          setStatus("error");
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
 
   return (
     <div className="min-h-screen bg-background flex flex-col items-center justify-center px-4">
