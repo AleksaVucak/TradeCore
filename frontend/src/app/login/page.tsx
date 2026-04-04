@@ -15,10 +15,15 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [unverified, setUnverified] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendMsg, setResendMsg] = useState("");
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+    setUnverified(false);
+    setResendMsg("");
     setLoading(true);
     try {
       const { access_token } = await authApi.login(email, password);
@@ -27,9 +32,26 @@ export default function LoginPage() {
       router.push("/");
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed. Check that the backend is running.");
+      const msg = err instanceof Error ? err.message : "Login failed.";
+      if (msg.toLowerCase().includes("not verified")) {
+        setUnverified(true);
+      }
+      setError(msg);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleResend() {
+    setResendLoading(true);
+    setResendMsg("");
+    try {
+      const res = await authApi.resendVerification(email, password);
+      setResendMsg(res.message);
+    } catch (err) {
+      setResendMsg(err instanceof Error ? err.message : "Could not resend email.");
+    } finally {
+      setResendLoading(false);
     }
   }
 
@@ -69,8 +91,24 @@ export default function LoginPage() {
           {error && (
             <p className="text-sm text-destructive">{error}</p>
           )}
+          {unverified && (
+            <div className="space-y-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                onClick={handleResend}
+                disabled={resendLoading}
+              >
+                {resendLoading ? "Sending..." : "Resend verification email"}
+              </Button>
+              {resendMsg && (
+                <p className="text-sm text-muted-foreground">{resendMsg}</p>
+              )}
+            </div>
+          )}
           <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? "Signing in…" : "Sign in"}
+            {loading ? "Signing in..." : "Sign in"}
           </Button>
         </form>
         <p className="text-center text-sm text-muted-foreground">

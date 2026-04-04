@@ -1,7 +1,10 @@
 import { api } from "./client";
 
-export type User = { id: number; email: string };
+export type User = { id: number; email: string; email_verified: boolean; totp_enabled: boolean };
 export type Token = { access_token: string; token_type: string };
+export type RegisterResponse = { id: number; email: string; email_verified: boolean; message: string };
+export type VerifyEmailResponse = { message: string; email_verified: boolean };
+export type ResendVerificationResponse = { message: string };
 export type Symbol = { id: number; symbol: string; base_asset: string; quote_asset: string; is_active: boolean };
 export type BacktestRunListItem = {
   id: string;
@@ -123,10 +126,14 @@ export type StrategyDetail = {
 
 export const authApi = {
   register: (email: string, password: string) =>
-    api.post<User>("/api/v1/auth/register", { email, password }),
+    api.post<RegisterResponse>("/api/v1/auth/register", { email, password }),
   login: (email: string, password: string) =>
     api.post<Token>("/api/v1/auth/login", new URLSearchParams({ username: email, password })),
   me: (token: string) => api.get<User>("/api/v1/auth/me", token),
+  verifyEmail: (token: string) =>
+    api.post<VerifyEmailResponse>("/api/v1/auth/verify-email", { token }),
+  resendVerification: (email: string, password: string) =>
+    api.post<ResendVerificationResponse>("/api/v1/auth/resend-verification", { email, password }),
 };
 
 export const symbolsApi = {

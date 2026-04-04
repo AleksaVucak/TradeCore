@@ -67,10 +67,11 @@ def client(db_session: Session):
 
 @pytest.fixture()
 def test_user(db_session: Session) -> User:
-    """Create and return a test user."""
+    """Create and return a verified test user."""
     user = User(
         email="testuser@example.com",
         hashed_password=get_password_hash("testpassword123"),
+        email_verified=True,
     )
     db_session.add(user)
     db_session.flush()
@@ -91,10 +92,11 @@ def auth_headers(test_user_token: str) -> dict[str, str]:
 
 @pytest.fixture()
 def other_user(db_session: Session) -> User:
-    """Create a second test user for permission tests."""
+    """Create a second verified test user for permission tests."""
     user = User(
         email="other@example.com",
         hashed_password=get_password_hash("otherpassword123"),
+        email_verified=True,
     )
     db_session.add(user)
     db_session.flush()

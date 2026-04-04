@@ -1,5 +1,6 @@
 from app.db.base import Base  # noqa: F401
 from app.models.user import User  # noqa: F401
+from app.models.email_verification_token import EmailVerificationToken  # noqa: F401
 from app.models.symbol import Symbol  # noqa: F401
 from app.models.candle import Candle  # noqa: F401
 from app.models.strategy import Strategy, StrategyVersion  # noqa: F401

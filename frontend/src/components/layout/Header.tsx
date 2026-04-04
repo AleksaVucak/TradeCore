@@ -41,7 +41,7 @@ export function Header() {
     router.refresh();
   }
 
-  const isAuthPage = pathname === "/login" || pathname === "/register";
+  const isAuthPage = pathname === "/login" || pathname === "/register" || pathname === "/verify-email";
 
   return (
     <header className="border-b border-border px-6 py-4 flex items-center justify-between">
