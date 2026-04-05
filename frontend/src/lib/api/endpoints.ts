@@ -428,7 +428,22 @@ export type EnsureRegimesResponse = {
   model_id: number | null;
 };
 
+export type TrainRegimeRequest = {
+  symbol_id: number;
+  timeframe: string;
+  start?: string | null;
+  end?: string | null;
+  tune?: boolean;
+};
+
+export type TrainRegimeResponse = {
+  status: string;
+  task_id: string;
+};
+
 export const regimesApi = {
+  train: (token: string, body: TrainRegimeRequest) =>
+    api.post<TrainRegimeResponse>("/api/v1/regimes/train", body, token),
   ensureForRun: (token: string, runId: string) =>
     api.post<EnsureRegimesResponse>(`/api/v1/regimes/run/${runId}/ensure`, {}, token),
   getForRun: (token: string, runId: string) =>

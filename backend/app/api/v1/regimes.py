@@ -20,6 +20,8 @@ from app.schemas.regime import (
     RegimeLabelOut,
     RegimeLabelResponse,
     RegimePerformanceResponse,
+    TrainRegimeRequest,
+    TrainRegimeResponse,
 )
 from app.services.ml.inference import get_latest_model, label_candles
 from app.services.ml.regime_performance import compute_regime_performance
@@ -296,6 +298,49 @@ def _model_to_info(meta: MLModelMetadata) -> ModelInfoOut:
         cv_best_score=metrics.get("cv_best_score"),
         cv_folds=metrics.get("cv_folds"),
     )
+
+
+@router.post("/train", response_model=TrainRegimeResponse, status_code=status.HTTP_202_ACCEPTED)
+def start_regime_training(
+    body: TrainRegimeRequest,
+    _user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Start training a regime classification model in the background.
+
+    Enqueues a Celery task and returns immediately with a task ID.
+    The trained model will appear in GET /regimes/models once complete.
+    """
+    from app.models.symbol import Symbol
+
+    symbol = db.query(Symbol).filter(Symbol.id == body.symbol_id).first()
+    if symbol is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Symbol with id {body.symbol_id} not found",
+        )
+
+    from app.tasks.regimes import train_regime_model_task
+
+    result = train_regime_model_task.apply_async(
+        kwargs={
+            "symbol_id": body.symbol_id,
+            "timeframe": body.timeframe,
+            "start_time": body.start,
+            "end_time": body.end,
+            "tune": body.tune,
+        },
+    )
+
+    logger.info(
+        "regime_training_enqueued",
+        task_id=result.id,
+        symbol_id=body.symbol_id,
+        timeframe=body.timeframe,
+        tune=body.tune,
+    )
+
+    return TrainRegimeResponse(status="queued", task_id=result.id)
 
 
 @router.get("/models", response_model=ModelListResponse)

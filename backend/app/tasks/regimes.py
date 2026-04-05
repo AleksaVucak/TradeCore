@@ -1,4 +1,4 @@
-"""Celery task for auto-labeling regimes after a backtest completes."""
+"""Celery tasks for regime labeling and model training."""
 
 from __future__ import annotations
 
@@ -95,3 +95,92 @@ def label_regimes_for_run_task(
         db.close()
 
     return {"status": "failed", "run_id": run_id}
+
+
+@celery_app.task(bind=True, max_retries=1, default_retry_delay=30)
+def train_regime_model_task(
+    self,
+    symbol_id: int,
+    timeframe: str,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    tune: bool = False,
+) -> dict[str, Any]:
+    """Train a regime classification model in the background.
+
+    Returns a summary dict with model_id, accuracy, etc. on success.
+    """
+    from datetime import datetime, timezone
+
+    from app.services.ml.training import train_regime_model
+
+    def _parse_dt(dt_str: str | None) -> datetime | None:
+        if not dt_str:
+            return None
+        dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+
+    db = SessionLocal()
+    try:
+        start = _parse_dt(start_time)
+        end = _parse_dt(end_time)
+
+        result = train_regime_model(
+            db,
+            symbol_id=symbol_id,
+            timeframe=timeframe,
+            start=start,
+            end=end,
+            tune=tune,
+        )
+
+        logger.info(
+            "regime_model_training_completed",
+            symbol_id=symbol_id,
+            timeframe=timeframe,
+            model_id=result["model_id"],
+            accuracy=result["accuracy"],
+        )
+
+        serializable_report = {}
+        for k, v in result.get("classification_report", {}).items():
+            if isinstance(v, dict):
+                serializable_report[k] = {
+                    rk: round(float(rv), 4) if isinstance(rv, float) else rv
+                    for rk, rv in v.items()
+                }
+            else:
+                serializable_report[k] = round(float(v), 4) if isinstance(v, float) else v
+
+        return {
+            "status": "ok",
+            "model_id": result["model_id"],
+            "artifact_path": result["artifact_path"],
+            "accuracy": result["accuracy"],
+            "n_train": result["n_train"],
+            "n_test": result["n_test"],
+            "label_distribution": result["label_distribution"],
+            "classification_report": serializable_report,
+            "tuned": result.get("tuned", False),
+            "best_params": result.get("best_params"),
+        }
+    except Exception as exc:
+        logger.exception(
+            "regime_model_training_failed",
+            symbol_id=symbol_id,
+            timeframe=timeframe,
+            error=str(exc),
+        )
+        try:
+            self.retry(exc=exc)
+        except self.MaxRetriesExceededError:
+            return {
+                "status": "failed",
+                "error": str(exc),
+            }
+    finally:
+        db.close()
+
+    return {"status": "failed"}

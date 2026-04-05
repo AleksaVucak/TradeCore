@@ -14,9 +14,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   marketDataApi,
+  regimesApi,
   symbolsApi,
   type CoverageRangeResponse,
   type FetchJobStatusResponse,
+  type ModelInfoOut,
   type Symbol,
 } from "@/lib/api/endpoints";
 import { getToken } from "@/lib/auth";
@@ -105,6 +107,11 @@ export default function MarketDataPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  const [models, setModels] = useState<ModelInfoOut[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [trainSubmitting, setTrainSubmitting] = useState(false);
+  const [trainTune, setTrainTune] = useState(false);
+
   const selectedSymbol = useMemo(
     () => symbols.find((symbol) => String(symbol.id) === selectedSymbolId) ?? null,
     [selectedSymbolId, symbols]
@@ -134,6 +141,18 @@ export default function MarketDataPage() {
       throw err;
     } finally {
       setCoverageLoading(false);
+    }
+  }
+
+  async function loadModels(token: string, symbolId: number, tf: string) {
+    setModelsLoading(true);
+    try {
+      const data = await regimesApi.listModels(token, { symbol_id: symbolId, timeframe: tf });
+      setModels(data.models);
+    } catch {
+      setModels([]);
+    } finally {
+      setModelsLoading(false);
     }
   }
 
@@ -191,7 +210,10 @@ export default function MarketDataPage() {
 
     (async () => {
       try {
-        await loadCoverage(token, Number(selectedSymbolId), timeframe);
+        await Promise.all([
+          loadCoverage(token, Number(selectedSymbolId), timeframe),
+          loadModels(token, Number(selectedSymbolId), timeframe),
+        ]);
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Failed to load coverage.");
@@ -609,6 +631,140 @@ export default function MarketDataPage() {
                         </tr>
                       );
                     })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+        {/* Regime model training */}
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle>Regime model training</CardTitle>
+            <CardDescription>
+              Train an ML model to classify market regimes (trend, range, high volatility)
+              for the selected symbol and timeframe. Existing models are listed below.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div className="flex flex-wrap items-end gap-4">
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Symbol</Label>
+                <p className="text-sm font-medium">{selectedSymbol?.symbol ?? "—"}</p>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Timeframe</Label>
+                <p className="text-sm font-medium">{timeframe}</p>
+              </div>
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={trainTune}
+                  onChange={(e) => setTrainTune(e.target.checked)}
+                  className="rounded border-input"
+                />
+                Hyperparameter tuning
+              </label>
+              <Button
+                disabled={trainSubmitting || !selectedSymbolId}
+                onClick={async () => {
+                  const token = getToken();
+                  if (!token || !selectedSymbolId) return;
+                  setTrainSubmitting(true);
+                  setError(null);
+                  setNotice(null);
+                  try {
+                    await regimesApi.train(token, {
+                      symbol_id: Number(selectedSymbolId),
+                      timeframe,
+                      tune: trainTune,
+                    });
+                    setNotice(
+                      "Regime model training started. It may take a minute — trained models will appear below once complete.",
+                    );
+                    setTimeout(async () => {
+                      const t = getToken();
+                      if (t && selectedSymbolId) {
+                        await loadModels(t, Number(selectedSymbolId), timeframe);
+                      }
+                    }, 15000);
+                  } catch (err) {
+                    setError(
+                      err instanceof Error ? err.message : "Failed to start training.",
+                    );
+                  } finally {
+                    setTrainSubmitting(false);
+                  }
+                }}
+              >
+                {trainSubmitting ? "Starting…" : "Train regime model"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={modelsLoading || !selectedSymbolId}
+                onClick={async () => {
+                  const token = getToken();
+                  if (token && selectedSymbolId) {
+                    await loadModels(token, Number(selectedSymbolId), timeframe);
+                  }
+                }}
+              >
+                {modelsLoading ? "Loading…" : "Refresh models"}
+              </Button>
+            </div>
+
+            {modelsLoading ? (
+              <p className="text-sm text-muted-foreground">Loading models…</p>
+            ) : models.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No trained models yet for {selectedSymbol?.symbol ?? "this symbol"} at {timeframe}.
+                Train one above to enable regime analysis on your backtests.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="px-2 py-3 text-left font-medium">ID</th>
+                      <th className="px-2 py-3 text-left font-medium">Name</th>
+                      <th className="px-2 py-3 text-right font-medium">Accuracy</th>
+                      <th className="px-2 py-3 text-right font-medium">Train / Test</th>
+                      <th className="px-2 py-3 text-left font-medium">Tuned</th>
+                      <th className="px-2 py-3 text-left font-medium">Created</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {models.map((m) => (
+                      <tr key={m.id} className="border-b border-border/70">
+                        <td className="px-2 py-3 tabular-nums text-muted-foreground">
+                          #{m.id}
+                        </td>
+                        <td className="px-2 py-3 font-medium">{m.name}</td>
+                        <td className="px-2 py-3 text-right tabular-nums">
+                          {m.accuracy != null ? `${(m.accuracy * 100).toFixed(1)}%` : "—"}
+                        </td>
+                        <td className="px-2 py-3 text-right tabular-nums text-muted-foreground">
+                          {m.n_train != null && m.n_test != null
+                            ? `${m.n_train.toLocaleString()} / ${m.n_test.toLocaleString()}`
+                            : "—"}
+                        </td>
+                        <td className="px-2 py-3">
+                          {m.tuned ? (
+                            <span className="inline-flex items-center rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 px-2 py-0.5 text-xs font-medium">
+                              Yes
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center rounded-md bg-muted text-muted-foreground px-2 py-0.5 text-xs font-medium">
+                              No
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-2 py-3 text-muted-foreground">
+                          {formatDateTime(m.created_at)}
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>

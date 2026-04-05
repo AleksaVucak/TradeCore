@@ -1,9 +1,9 @@
-"""Pydantic schemas for regime labels (9.3), performance (9.5), and models (9.6)."""
+"""Pydantic schemas for regime labels (9.3), performance (9.5), models (9.6), and training."""
 
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class RegimeLabelOut(BaseModel):
@@ -83,3 +83,20 @@ class EnsureRegimesResponse(BaseModel):
     status: str
     labeled_bars: int = 0
     model_id: int | None = None
+
+
+class TrainRegimeRequest(BaseModel):
+    """Request body to start regime model training."""
+
+    symbol_id: int = Field(..., description="Symbol to train on")
+    timeframe: str = Field("1h", description="Candle timeframe (e.g. 1h, 4h)")
+    start: str | None = Field(None, description="Training start (ISO-8601, optional)")
+    end: str | None = Field(None, description="Training end (ISO-8601, optional)")
+    tune: bool = Field(False, description="Enable hyperparameter tuning")
+
+
+class TrainRegimeResponse(BaseModel):
+    """Response after enqueuing a training job."""
+
+    status: str
+    task_id: str
