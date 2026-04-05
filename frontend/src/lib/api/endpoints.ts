@@ -5,6 +5,9 @@ export type Token = { access_token: string; token_type: string };
 export type RegisterResponse = { id: number; email: string; email_verified: boolean; message: string };
 export type VerifyEmailResponse = { message: string; email_verified: boolean };
 export type ResendVerificationResponse = { message: string };
+export type TwoFactorSetupStartResponse = { secret: string; otpauth_uri: string };
+export type TwoFactorSetupConfirmResponse = { message: string; totp_enabled: boolean };
+export type TwoFactorDisableResponse = { message: string; totp_enabled: boolean };
 export type Symbol = { id: number; symbol: string; base_asset: string; quote_asset: string; is_active: boolean };
 export type BacktestRunListItem = {
   id: string;
@@ -134,6 +137,12 @@ export const authApi = {
     api.post<VerifyEmailResponse>("/api/v1/auth/verify-email", { token }),
   resendVerification: (email: string, password: string) =>
     api.post<ResendVerificationResponse>("/api/v1/auth/resend-verification", { email, password }),
+  twoFactorSetupStart: (token: string) =>
+    api.post<TwoFactorSetupStartResponse>("/api/v1/auth/2fa/setup/start", {}, token),
+  twoFactorSetupConfirm: (code: string, token: string) =>
+    api.post<TwoFactorSetupConfirmResponse>("/api/v1/auth/2fa/setup/confirm", { code }, token),
+  twoFactorDisable: (password: string, code: string, token: string) =>
+    api.post<TwoFactorDisableResponse>("/api/v1/auth/2fa/disable", { password, code }, token),
 };
 
 export const symbolsApi = {

@@ -81,6 +81,12 @@ export function Header() {
             >
               Market data
             </Link>
+            <Link
+              href="/settings"
+              className={pathname === "/settings" ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground"}
+            >
+              Settings
+            </Link>
           </nav>
         )}
       </div>

@@ -1,11 +1,14 @@
-"""API tests for auth endpoints (Phase 11.2 + Phase 15.1 email verification)."""
+"""API tests for auth endpoints (Phase 11.2 + Phase 15.1/15.3)."""
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
+from urllib.parse import quote
 
+import pyotp
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.core.security import create_access_token
 from app.models.email_verification_token import EmailVerificationToken
 from app.models.user import User
 from app.services.email import _hash_token
@@ -327,3 +330,171 @@ class TestMe:
             headers={"Authorization": "Bearer invalidtoken"},
         )
         assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# 2FA setup / confirm / disable (Phase 15.3)
+# ---------------------------------------------------------------------------
+class TestTwoFactorSetup:
+    """Tests for the TOTP 2FA enable flow."""
+
+    def test_setup_start_returns_secret_and_uri(
+        self, client: TestClient, test_user: User, auth_headers: dict
+    ) -> None:
+        resp = client.post("/api/v1/auth/2fa/setup/start", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "secret" in data
+        assert "otpauth_uri" in data
+        assert data["otpauth_uri"].startswith("otpauth://totp/")
+        # pyotp URL-encodes the account label (e.g. @ → %40) in the otpauth path
+        assert quote(test_user.email, safe="") in data["otpauth_uri"]
+
+    def test_setup_start_rejects_if_already_enabled(
+        self, client: TestClient, db_session: Session, test_user: User, auth_headers: dict
+    ) -> None:
+        test_user.totp_secret = pyotp.random_base32()
+        test_user.totp_enabled = True
+        db_session.flush()
+
+        resp = client.post("/api/v1/auth/2fa/setup/start", headers=auth_headers)
+        assert resp.status_code == 400
+        assert "already enabled" in resp.json()["detail"].lower()
+
+    def test_setup_confirm_success(
+        self, client: TestClient, db_session: Session, test_user: User, auth_headers: dict
+    ) -> None:
+        resp = client.post("/api/v1/auth/2fa/setup/start", headers=auth_headers)
+        secret = resp.json()["secret"]
+
+        code = pyotp.TOTP(secret).now()
+        resp = client.post(
+            "/api/v1/auth/2fa/setup/confirm",
+            json={"code": code},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["totp_enabled"] is True
+        assert "enabled" in data["message"].lower()
+
+        db_session.refresh(test_user)
+        assert test_user.totp_enabled is True
+
+    def test_setup_confirm_bad_code(
+        self, client: TestClient, test_user: User, auth_headers: dict
+    ) -> None:
+        client.post("/api/v1/auth/2fa/setup/start", headers=auth_headers)
+
+        resp = client.post(
+            "/api/v1/auth/2fa/setup/confirm",
+            json={"code": "000000"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "invalid code" in resp.json()["detail"].lower()
+
+    def test_setup_confirm_without_start(
+        self, client: TestClient, test_user: User, auth_headers: dict
+    ) -> None:
+        resp = client.post(
+            "/api/v1/auth/2fa/setup/confirm",
+            json={"code": "123456"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "start" in resp.json()["detail"].lower()
+
+    def test_setup_confirm_rejects_if_already_enabled(
+        self, client: TestClient, db_session: Session, test_user: User, auth_headers: dict
+    ) -> None:
+        test_user.totp_secret = pyotp.random_base32()
+        test_user.totp_enabled = True
+        db_session.flush()
+
+        resp = client.post(
+            "/api/v1/auth/2fa/setup/confirm",
+            json={"code": "123456"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+
+
+class TestTwoFactorDisable:
+    """Tests for the TOTP 2FA disable flow."""
+
+    def _enable_2fa(self, db_session: Session, user: User) -> str:
+        secret = pyotp.random_base32()
+        user.totp_secret = secret
+        user.totp_enabled = True
+        db_session.flush()
+        return secret
+
+    def test_disable_success(
+        self, client: TestClient, db_session: Session, test_user: User, auth_headers: dict
+    ) -> None:
+        secret = self._enable_2fa(db_session, test_user)
+        code = pyotp.TOTP(secret).now()
+
+        resp = client.post(
+            "/api/v1/auth/2fa/disable",
+            json={"password": "testpassword123", "code": code},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["totp_enabled"] is False
+        assert "disabled" in data["message"].lower()
+
+        db_session.refresh(test_user)
+        assert test_user.totp_enabled is False
+        assert test_user.totp_secret is None
+
+    def test_disable_wrong_password(
+        self, client: TestClient, db_session: Session, test_user: User, auth_headers: dict
+    ) -> None:
+        secret = self._enable_2fa(db_session, test_user)
+        code = pyotp.TOTP(secret).now()
+
+        resp = client.post(
+            "/api/v1/auth/2fa/disable",
+            json={"password": "wrongpassword", "code": code},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 401
+
+    def test_disable_bad_code(
+        self, client: TestClient, db_session: Session, test_user: User, auth_headers: dict
+    ) -> None:
+        self._enable_2fa(db_session, test_user)
+
+        resp = client.post(
+            "/api/v1/auth/2fa/disable",
+            json={"password": "testpassword123", "code": "000000"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_disable_when_not_enabled(
+        self, client: TestClient, test_user: User, auth_headers: dict
+    ) -> None:
+        resp = client.post(
+            "/api/v1/auth/2fa/disable",
+            json={"password": "testpassword123", "code": "123456"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "not enabled" in resp.json()["detail"].lower()
+
+    def test_unauthenticated_2fa_calls(self, client: TestClient) -> None:
+        resp = client.post("/api/v1/auth/2fa/setup/start")
+        assert resp.status_code == 401 or resp.status_code == 403
+
+        resp = client.post("/api/v1/auth/2fa/setup/confirm", json={"code": "123456"})
+        assert resp.status_code == 401 or resp.status_code == 403
+
+        resp = client.post(
+            "/api/v1/auth/2fa/disable",
+            json={"password": "pass", "code": "123456"},
+        )
+        assert resp.status_code == 401 or resp.status_code == 403

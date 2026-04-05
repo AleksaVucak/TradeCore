@@ -1,4 +1,4 @@
-"""Auth routes — register, login (hard-gate on unverified), verify, resend (Phase 15.1)."""
+"""Auth routes — register, login, verify, resend, 2FA setup/confirm/disable (Phases 15.1–15.3)."""
 
 from datetime import datetime, timezone
 
@@ -15,6 +15,11 @@ from app.schemas.user import (
     RegisterResponse,
     ResendVerificationResponse,
     Token,
+    TwoFactorDisableRequest,
+    TwoFactorDisableResponse,
+    TwoFactorSetupConfirmRequest,
+    TwoFactorSetupConfirmResponse,
+    TwoFactorSetupStartResponse,
     UserCreate,
     UserResponse,
     VerifyEmailRequest,
@@ -26,6 +31,7 @@ from app.services.email import (
     send_verification_email,
     verify_token,
 )
+from app.services.totp import build_provisioning_uri, generate_secret, verify_code
 
 logger = get_logger(__name__)
 
@@ -156,3 +162,112 @@ def me(user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     return user
+
+
+# ── 2FA endpoints (Phase 15.3) ──────────────────────────────────────
+
+
+@router.post("/2fa/setup/start", response_model=TwoFactorSetupStartResponse)
+def two_factor_setup_start(
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Generate a TOTP secret and return it with a provisioning URI for QR scanning.
+
+    The secret is persisted immediately but totp_enabled stays False until the
+    user confirms with a valid code via /2fa/setup/confirm.
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if user.totp_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Two-factor authentication is already enabled.",
+        )
+
+    secret = generate_secret()
+    user.totp_secret = secret
+    db.commit()
+
+    uri = build_provisioning_uri(secret, user.email)
+    logger.info("2fa_setup_started", user_id=user.id)
+    return TwoFactorSetupStartResponse(secret=secret, otpauth_uri=uri)
+
+
+@router.post("/2fa/setup/confirm", response_model=TwoFactorSetupConfirmResponse)
+def two_factor_setup_confirm(
+    body: TwoFactorSetupConfirmRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Verify the TOTP code the user entered and enable 2FA on their account."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if user.totp_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Two-factor authentication is already enabled.",
+        )
+
+    if not user.totp_secret:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Start 2FA setup first before confirming.",
+        )
+
+    if not verify_code(user.totp_secret, body.code):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid code. Please try again.",
+        )
+
+    user.totp_enabled = True
+    db.commit()
+    logger.info("2fa_enabled", user_id=user.id)
+    return TwoFactorSetupConfirmResponse(
+        message="Two-factor authentication enabled successfully.",
+        totp_enabled=True,
+    )
+
+
+@router.post("/2fa/disable", response_model=TwoFactorDisableResponse)
+def two_factor_disable(
+    body: TwoFactorDisableRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Disable 2FA. Requires current password + a valid TOTP code for safety."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if not user.totp_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Two-factor authentication is not enabled.",
+        )
+
+    if not verify_password(body.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect password.",
+        )
+
+    if not user.totp_secret or not verify_code(user.totp_secret, body.code):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid code. Please try again.",
+        )
+
+    user.totp_secret = None
+    user.totp_enabled = False
+    db.commit()
+    logger.info("2fa_disabled", user_id=user.id)
+    return TwoFactorDisableResponse(
+        message="Two-factor authentication has been disabled.",
+        totp_enabled=False,
+    )

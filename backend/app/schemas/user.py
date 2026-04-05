@@ -43,3 +43,25 @@ class RegisterResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ── 2FA (TOTP) schemas ──────────────────────────────────────────────
+
+class TwoFactorSetupStartResponse(BaseModel):
+    secret: str
+    otpauth_uri: str
+
+class TwoFactorSetupConfirmRequest(BaseModel):
+    code: str
+
+class TwoFactorSetupConfirmResponse(BaseModel):
+    message: str
+    totp_enabled: bool
+
+class TwoFactorDisableRequest(BaseModel):
+    password: str
+    code: str
+
+class TwoFactorDisableResponse(BaseModel):
+    message: str
+    totp_enabled: bool
