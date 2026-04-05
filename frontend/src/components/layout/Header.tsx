@@ -3,14 +3,14 @@
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { authApi } from "@/lib/api/endpoints";
+import { authApi, type User } from "@/lib/api/endpoints";
 import { getToken, removeToken } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 
 export function Header() {
   const router = useRouter();
   const pathname = usePathname();
-  const [user, setUser] = useState<{ email: string } | null>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
   function checkAuth() {
@@ -89,7 +89,29 @@ export function Header() {
           <span className="text-sm text-muted-foreground">…</span>
         ) : user ? (
           <>
-            <span className="text-sm text-muted-foreground">{user.email}</span>
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-sm text-muted-foreground truncate max-w-[200px] sm:max-w-[280px]">
+                {user.email}
+              </span>
+              {user.email_verified && (
+                <span
+                  className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-muted/50 px-2 py-0.5 text-xs text-muted-foreground"
+                  title="Email verified"
+                >
+                  <svg
+                    className="h-3.5 w-3.5 text-green-600 dark:text-green-500"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    strokeWidth={2}
+                    stroke="currentColor"
+                    aria-hidden
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                  </svg>
+                  Verified
+                </span>
+              )}
+            </div>
             <Button variant="outline" size="sm" onClick={handleLogout}>
               Logout
             </Button>
