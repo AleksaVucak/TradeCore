@@ -14,13 +14,14 @@ from app.models.backtest_run import BacktestRun
 from app.models.ml_model_metadata import MLModelMetadata
 from app.models.regime_label import RegimeLabel
 from app.schemas.regime import (
+    EnsureRegimesResponse,
     ModelInfoOut,
     ModelListResponse,
     RegimeLabelOut,
     RegimeLabelResponse,
     RegimePerformanceResponse,
 )
-from app.services.ml.inference import get_latest_model
+from app.services.ml.inference import get_latest_model, label_candles
 from app.services.ml.regime_performance import compute_regime_performance
 
 logger = get_logger(__name__)
@@ -136,6 +137,90 @@ def get_regime_labels_for_run(
         symbol_id=run.symbol_id,
         timeframe=run.timeframe,
         labels=[RegimeLabelOut(timestamp=lbl.timestamp, regime=lbl.regime) for lbl in labels],
+    )
+
+
+@router.post("/run/{run_id}/ensure", response_model=EnsureRegimesResponse)
+def ensure_regimes_for_run(
+    run_id: str,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Ensure regime labels exist for a backtest run's date range.
+
+    If labels already exist for the latest model, returns immediately.
+    If a trained model exists but labels are missing, runs inference and
+    persists them. Returns 200 with status="no_model" when no trained
+    model is available (training is a separate, explicit step).
+    """
+    try:
+        run_uuid = uuid.UUID(run_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Backtest run not found",
+        )
+
+    run = (
+        db.query(BacktestRun)
+        .filter(BacktestRun.id == run_uuid, BacktestRun.user_id == user_id)
+        .first()
+    )
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Backtest run not found",
+        )
+
+    meta = get_latest_model(db, run.symbol_id, run.timeframe)
+    if meta is None:
+        return EnsureRegimesResponse(status="no_model")
+
+    existing_count = (
+        db.query(RegimeLabel)
+        .filter(
+            RegimeLabel.model_id == meta.id,
+            RegimeLabel.symbol_id == run.symbol_id,
+            RegimeLabel.timeframe == run.timeframe,
+            RegimeLabel.timestamp >= run.start_time,
+            RegimeLabel.timestamp <= run.end_time,
+        )
+        .count()
+    )
+    if existing_count > 0:
+        return EnsureRegimesResponse(
+            status="already_labeled",
+            labeled_bars=existing_count,
+            model_id=meta.id,
+        )
+
+    try:
+        result = label_candles(
+            db,
+            symbol_id=run.symbol_id,
+            timeframe=run.timeframe,
+            start=run.start_time,
+            end=run.end_time,
+            backtest_run_id=run_id,
+        )
+    except ValueError as exc:
+        logger.warning(
+            "ensure_regimes_insufficient_data",
+            run_id=run_id,
+            error=str(exc),
+        )
+        return EnsureRegimesResponse(status="insufficient_data", model_id=meta.id)
+
+    logger.info(
+        "ensure_regimes_labeled",
+        run_id=run_id,
+        labeled_bars=result["labeled_bars"],
+        model_id=meta.id,
+    )
+    return EnsureRegimesResponse(
+        status="labeled",
+        labeled_bars=result["labeled_bars"],
+        model_id=meta.id,
     )
 
 

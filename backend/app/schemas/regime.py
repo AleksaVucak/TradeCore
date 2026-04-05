@@ -75,3 +75,11 @@ class ModelListResponse(BaseModel):
     """Response listing trained models (Phase 9.6)."""
 
     models: list[ModelInfoOut]
+
+
+class EnsureRegimesResponse(BaseModel):
+    """Response from the ensure-regimes endpoint."""
+
+    status: str
+    labeled_bars: int = 0
+    model_id: int | None = None

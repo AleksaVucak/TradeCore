@@ -422,7 +422,15 @@ export type ModelListResponse = {
   models: ModelInfoOut[];
 };
 
+export type EnsureRegimesResponse = {
+  status: string;
+  labeled_bars: number;
+  model_id: number | null;
+};
+
 export const regimesApi = {
+  ensureForRun: (token: string, runId: string) =>
+    api.post<EnsureRegimesResponse>(`/api/v1/regimes/run/${runId}/ensure`, {}, token),
   getForRun: (token: string, runId: string) =>
     api.get<RegimeLabelResponse>(`/api/v1/regimes/run/${runId}`, token),
   get: (

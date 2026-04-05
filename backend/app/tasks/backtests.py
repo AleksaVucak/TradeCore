@@ -219,6 +219,24 @@ def run_backtest_task(
             _persist_run_outputs(db, run_uuid, bt_result, metrics)
             _update_run_status(db, run_uuid, BacktestRunStatus.COMPLETED)
 
+            from app.tasks.regimes import label_regimes_for_run_task
+
+            label_regimes_for_run_task.apply_async(
+                kwargs={
+                    "run_id": str(run_uuid),
+                    "symbol_id": symbol_id,
+                    "timeframe": timeframe,
+                    "start_time": start_dt.isoformat(),
+                    "end_time": end_dt.isoformat(),
+                },
+            )
+            logger.info(
+                "regime_labeling_enqueued",
+                run_id=run_id,
+                symbol_id=symbol_id,
+                timeframe=timeframe,
+            )
+
         return {
             "status": "ok",
             "summary": summary,

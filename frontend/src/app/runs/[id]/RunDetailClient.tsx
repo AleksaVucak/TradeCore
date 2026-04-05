@@ -218,30 +218,39 @@ export function RunDetailClient({ runId }: { runId: string }) {
     if (!run || run.status !== "completed") return;
     const token = getToken();
     if (!token) return;
-    regimesApi
-      .getForRun(token, runId)
-      .then((data) => setRegimeLabels(data.labels))
-      .catch(() => setRegimeLabels([]));
-  }, [run, runId]);
 
-  useEffect(() => {
-    if (!run || run.status !== "completed") return;
-    const token = getToken();
-    if (!token) return;
-    regimesApi
-      .getPerformanceForRun(token, runId)
-      .then((data) => setRegimePerformance(data))
-      .catch(() => setRegimePerformance(null));
-  }, [run, runId]);
+    let cancelled = false;
 
-  useEffect(() => {
-    if (!run || run.status !== "completed") return;
-    const token = getToken();
-    if (!token) return;
-    regimesApi
-      .getModelForRun(token, runId)
-      .then((data) => setModelInfo(data))
-      .catch(() => setModelInfo(null));
+    async function loadRegimes() {
+      try {
+        await regimesApi.ensureForRun(token!, runId);
+      } catch {
+        // Best-effort; if ensure fails we still try to read existing labels
+      }
+
+      if (cancelled) return;
+
+      const [labelsResult, perfResult, modelResult] = await Promise.allSettled([
+        regimesApi.getForRun(token!, runId),
+        regimesApi.getPerformanceForRun(token!, runId),
+        regimesApi.getModelForRun(token!, runId),
+      ]);
+
+      if (cancelled) return;
+
+      setRegimeLabels(
+        labelsResult.status === "fulfilled" ? labelsResult.value.labels : [],
+      );
+      setRegimePerformance(
+        perfResult.status === "fulfilled" ? perfResult.value : null,
+      );
+      setModelInfo(
+        modelResult.status === "fulfilled" ? modelResult.value : null,
+      );
+    }
+
+    loadRegimes();
+    return () => { cancelled = true; };
   }, [run, runId]);
 
   const regimeBands: RegimeBand[] = useMemo(() => {
