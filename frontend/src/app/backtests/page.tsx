@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Card,
   CardContent,
@@ -46,10 +46,22 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+const LIST_POLL_INTERVAL_MS = 3000;
+const hasInFlightRun = (runs: BacktestRunListItem[]) =>
+  runs.some((r) => r.status === "pending" || r.status === "running");
+
 export default function BacktestsPage() {
   const [runs, setRuns] = useState<BacktestRunListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     const token = getToken();
@@ -60,18 +72,45 @@ export default function BacktestsPage() {
       });
       return;
     }
+
+    let cancelled = false;
+
     backtestsApi
       .list(token)
       .then((data) => {
+        if (cancelled) return;
         setRuns(data);
         setError(null);
+
+        if (hasInFlightRun(data)) {
+          stopPolling();
+          pollRef.current = setInterval(async () => {
+            try {
+              const latest = await backtestsApi.list(token);
+              if (cancelled) return;
+              setRuns(latest);
+              if (!hasInFlightRun(latest)) stopPolling();
+            } catch {
+              // transient error — keep polling
+            }
+          }, LIST_POLL_INTERVAL_MS);
+        }
       })
       .catch((err) => {
-        setError(err instanceof Error ? err.message : "Failed to load runs");
-        setRuns([]);
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Failed to load runs");
+          setRuns([]);
+        }
       })
-      .finally(() => setLoading(false));
-  }, []);
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+      stopPolling();
+    };
+  }, [stopPolling]);
 
   return (
     <div className="min-h-screen bg-background">
