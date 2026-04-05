@@ -1,4 +1,4 @@
-"""API tests for auth endpoints (Phase 11.2 + Phase 15.1/15.3)."""
+"""API tests for auth endpoints (Phase 11.2 + Phases 15.1–15.4)."""
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
@@ -118,6 +118,87 @@ class TestLogin:
             data={"username": "nobody@example.com", "password": "pass"},
         )
         assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Login — 2FA gate (Phase 15.4)
+# ---------------------------------------------------------------------------
+class TestLoginTwoFactor:
+    """Login behaviour when totp_enabled is True on the account."""
+
+    def _enable_2fa(self, db_session: Session, user: User) -> str:
+        secret = pyotp.random_base32()
+        user.totp_secret = secret
+        user.totp_enabled = True
+        db_session.flush()
+        return secret
+
+    def test_login_2fa_missing_code(
+        self, client: TestClient, db_session: Session, test_user: User
+    ) -> None:
+        self._enable_2fa(db_session, test_user)
+        resp = client.post(
+            "/api/v1/auth/login",
+            data={"username": test_user.email, "password": "testpassword123"},
+        )
+        assert resp.status_code == 401
+        assert "code required" in resp.json()["detail"].lower()
+
+    def test_login_2fa_wrong_code(
+        self, client: TestClient, db_session: Session, test_user: User
+    ) -> None:
+        self._enable_2fa(db_session, test_user)
+        resp = client.post(
+            "/api/v1/auth/login",
+            data={
+                "username": test_user.email,
+                "password": "testpassword123",
+                "totp_code": "000000",
+            },
+        )
+        assert resp.status_code == 401
+        assert "invalid" in resp.json()["detail"].lower()
+
+    def test_login_2fa_correct_code(
+        self, client: TestClient, db_session: Session, test_user: User
+    ) -> None:
+        secret = self._enable_2fa(db_session, test_user)
+        code = pyotp.TOTP(secret).now()
+        resp = client.post(
+            "/api/v1/auth/login",
+            data={
+                "username": test_user.email,
+                "password": "testpassword123",
+                "totp_code": code,
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "access_token" in data
+        assert data["token_type"] == "bearer"
+
+    def test_login_no_2fa_still_works(
+        self, client: TestClient, test_user: User
+    ) -> None:
+        """Users without 2FA should login normally without a totp_code."""
+        resp = client.post(
+            "/api/v1/auth/login",
+            data={"username": test_user.email, "password": "testpassword123"},
+        )
+        assert resp.status_code == 200
+        assert "access_token" in resp.json()
+
+    def test_login_2fa_wrong_password_no_totp_leak(
+        self, client: TestClient, db_session: Session, test_user: User
+    ) -> None:
+        """Wrong password should fail with generic error, not reveal 2FA status."""
+        self._enable_2fa(db_session, test_user)
+        resp = client.post(
+            "/api/v1/auth/login",
+            data={"username": test_user.email, "password": "wrongpassword"},
+        )
+        assert resp.status_code == 401
+        assert "incorrect" in resp.json()["detail"].lower()
 
 
 # ---------------------------------------------------------------------------

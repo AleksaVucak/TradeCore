@@ -1,8 +1,8 @@
-"""Auth routes — register, login, verify, resend, 2FA setup/confirm/disable (Phases 15.1–15.3)."""
+"""Auth routes — register, login (with 2FA gate), verify, resend, 2FA setup/confirm/disable (Phases 15.1–15.4)."""
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
@@ -80,7 +80,8 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=Token)
-def login(
+async def login(
+    request: Request,
     form: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
 ):
@@ -98,6 +99,23 @@ def login(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Email not verified. Please check your inbox and verify your email before logging in.",
         )
+
+    # ── 2FA gate (Phase 15.4) ────────────────────────────────────────
+    if user.totp_enabled:
+        form_data = await request.form()
+        totp_code = form_data.get("totp_code", "")
+        if not totp_code:
+            logger.warning("login_failed", email=form.username, reason="totp_required")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Two-factor authentication code required.",
+            )
+        if not verify_code(user.totp_secret, str(totp_code)):
+            logger.warning("login_failed", email=form.username, reason="totp_invalid")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid two-factor authentication code.",
+            )
 
     token = create_access_token(subject=user.id)
     logger.info("login_success", user_id=user.id, email=user.email)

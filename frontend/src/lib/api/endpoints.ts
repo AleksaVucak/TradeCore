@@ -130,8 +130,11 @@ export type StrategyDetail = {
 export const authApi = {
   register: (email: string, password: string) =>
     api.post<RegisterResponse>("/api/v1/auth/register", { email, password }),
-  login: (email: string, password: string) =>
-    api.post<Token>("/api/v1/auth/login", new URLSearchParams({ username: email, password })),
+  login: (email: string, password: string, totpCode?: string) => {
+    const params = new URLSearchParams({ username: email, password });
+    if (totpCode) params.set("totp_code", totpCode);
+    return api.post<Token>("/api/v1/auth/login", params);
+  },
   me: (token: string) => api.get<User>("/api/v1/auth/me", token),
   verifyEmail: (token: string) =>
     api.post<VerifyEmailResponse>("/api/v1/auth/verify-email", { token }),

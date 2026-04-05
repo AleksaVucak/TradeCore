@@ -13,9 +13,11 @@ export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [totpCode, setTotpCode] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [unverified, setUnverified] = useState(false);
+  const [totpRequired, setTotpRequired] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
   const [resendMsg, setResendMsg] = useState("");
 
@@ -26,7 +28,8 @@ export default function LoginPage() {
     setResendMsg("");
     setLoading(true);
     try {
-      const { access_token } = await authApi.login(email, password);
+      const code = totpRequired ? totpCode : undefined;
+      const { access_token } = await authApi.login(email, password, code);
       setToken(access_token);
       window.dispatchEvent(new CustomEvent("tradecore:auth"));
       router.push("/");
@@ -35,6 +38,11 @@ export default function LoginPage() {
       const msg = err instanceof Error ? err.message : "Login failed.";
       if (msg.toLowerCase().includes("not verified")) {
         setUnverified(true);
+      } else if (msg.toLowerCase().includes("code required")) {
+        setTotpRequired(true);
+        setError("");
+        setLoading(false);
+        return;
       }
       setError(msg);
     } finally {
@@ -73,7 +81,7 @@ export default function LoginPage() {
               onChange={(e) => setEmail(e.target.value)}
               required
               autoComplete="email"
-              disabled={loading}
+              disabled={loading || totpRequired}
             />
           </div>
           <div className="space-y-2">
@@ -85,9 +93,29 @@ export default function LoginPage() {
               onChange={(e) => setPassword(e.target.value)}
               required
               autoComplete="current-password"
-              disabled={loading}
+              disabled={loading || totpRequired}
             />
           </div>
+
+          {totpRequired && (
+            <div className="space-y-2">
+              <Label htmlFor="totp-code">Authenticator code</Label>
+              <p className="text-xs text-muted-foreground">
+                Open your authenticator app and enter the 6-digit code.
+              </p>
+              <Input
+                id="totp-code"
+                placeholder="000000"
+                maxLength={6}
+                value={totpCode}
+                onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                className="max-w-[200px] font-mono tracking-widest text-center text-lg"
+                autoComplete="one-time-code"
+                autoFocus
+              />
+            </div>
+          )}
+
           {error && (
             <p className="text-sm text-destructive">{error}</p>
           )}
@@ -107,9 +135,23 @@ export default function LoginPage() {
               )}
             </div>
           )}
-          <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? "Signing in..." : "Sign in"}
+          <Button type="submit" className="w-full" disabled={loading || (totpRequired && totpCode.length !== 6)}>
+            {loading ? "Signing in..." : totpRequired ? "Verify & Sign in" : "Sign in"}
           </Button>
+          {totpRequired && (
+            <Button
+              type="button"
+              variant="ghost"
+              className="w-full"
+              onClick={() => {
+                setTotpRequired(false);
+                setTotpCode("");
+                setError("");
+              }}
+            >
+              Back
+            </Button>
+          )}
         </form>
         <p className="text-center text-sm text-muted-foreground">
           Don&apos;t have an account?{" "}
