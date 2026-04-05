@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
+  Area,
   CartesianGrid,
-  Line,
-  LineChart,
+  ComposedChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -125,6 +126,16 @@ export default function WalkForwardPage() {
       })) ?? [],
     [result]
   );
+
+  const returnGradientOffset = useMemo(() => {
+    if (chartData.length === 0) return 0.5;
+    const returns = chartData.map((d) => d.total_return_pct);
+    const maxVal = Math.max(...returns);
+    const minVal = Math.min(...returns);
+    if (maxVal <= 0) return 0;
+    if (minVal >= 0) return 1;
+    return maxVal / (maxVal - minVal);
+  }, [chartData]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -685,7 +696,21 @@ export default function WalkForwardPage() {
                 ) : (
                   <div className="h-[320px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={chartData} margin={{ top: 10, right: 16, left: 8, bottom: 4 }}>
+                      <ComposedChart data={chartData} margin={{ top: 10, right: 16, left: 8, bottom: 4 }}>
+                        <defs>
+                          <linearGradient id="wfReturnStroke" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset={0} stopColor="#22c55e" />
+                            <stop offset={returnGradientOffset} stopColor="#22c55e" />
+                            <stop offset={returnGradientOffset} stopColor="#ef4444" />
+                            <stop offset={1} stopColor="#ef4444" />
+                          </linearGradient>
+                          <linearGradient id="wfReturnFill" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset={0} stopColor="#22c55e" stopOpacity={0.25} />
+                            <stop offset={returnGradientOffset} stopColor="#22c55e" stopOpacity={0.05} />
+                            <stop offset={returnGradientOffset} stopColor="#ef4444" stopOpacity={0.05} />
+                            <stop offset={1} stopColor="#ef4444" stopOpacity={0.25} />
+                          </linearGradient>
+                        </defs>
                         <CartesianGrid
                           strokeDasharray="3 3"
                           stroke="hsl(var(--border))"
@@ -702,30 +727,68 @@ export default function WalkForwardPage() {
                           tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
                           axisLine={{ stroke: "hsl(var(--border))" }}
                           tickLine={{ stroke: "hsl(var(--border))" }}
+                          domain={["auto", "auto"]}
+                        />
+                        <ReferenceLine
+                          y={0}
+                          stroke="hsl(var(--muted-foreground))"
+                          strokeDasharray="4 4"
+                          strokeOpacity={0.5}
                         />
                         <Tooltip
-                          contentStyle={{
-                            backgroundColor: "hsl(var(--card))",
-                            border: "1px solid hsl(var(--border))",
-                            borderRadius: "var(--radius)",
-                            fontSize: 12,
-                          }}
-                          formatter={(value, name) => {
-                            if (typeof value !== "number") return ["—", String(name)];
-                            if (name === "num_trades") return [value, "Trades"];
-                            if (name === "max_drawdown_pct") return [`${value.toFixed(2)}%`, "Drawdown"];
-                            return [`${value.toFixed(2)}%`, "Return"];
+                          content={({ active, payload, label }) => {
+                            if (!active || !payload?.length) return null;
+                            const row = payload[0]?.payload as {
+                              total_return_pct?: number;
+                              max_drawdown_pct?: number;
+                              num_trades?: number;
+                            };
+                            if (!row) return null;
+                            return (
+                              <div
+                                className="rounded-md border text-xs shadow-sm"
+                                style={{
+                                  backgroundColor: "hsl(var(--card))",
+                                  borderColor: "hsl(var(--border))",
+                                  padding: "8px 10px",
+                                }}
+                              >
+                                <p className="font-medium text-foreground mb-1">{label}</p>
+                                <p className="text-muted-foreground">
+                                  Return:{" "}
+                                  <span className="text-foreground tabular-nums">
+                                    {formatPct(row.total_return_pct)}
+                                  </span>
+                                </p>
+                                <p className="text-muted-foreground">
+                                  Drawdown:{" "}
+                                  <span className="text-foreground tabular-nums">
+                                    {row.max_drawdown_pct != null
+                                      ? `${row.max_drawdown_pct.toFixed(2)}%`
+                                      : "—"}
+                                  </span>
+                                </p>
+                                <p className="text-muted-foreground">
+                                  Trades:{" "}
+                                  <span className="text-foreground tabular-nums">
+                                    {row.num_trades ?? "—"}
+                                  </span>
+                                </p>
+                              </div>
+                            );
                           }}
                         />
-                        <Line
+                        <Area
                           type="monotone"
                           dataKey="total_return_pct"
-                          stroke="#22c55e"
-                          strokeWidth={2.5}
+                          stroke="url(#wfReturnStroke)"
+                          strokeWidth={2}
+                          fill="url(#wfReturnFill)"
                           dot={false}
-                          activeDot={{ r: 4, fill: "#22c55e" }}
+                          activeDot={{ r: 4 }}
+                          isAnimationActive={false}
                         />
-                      </LineChart>
+                      </ComposedChart>
                     </ResponsiveContainer>
                   </div>
                 )}
