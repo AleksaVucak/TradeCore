@@ -187,7 +187,6 @@ export function RunDetailClient({ runId }: { runId: string }) {
         timeframe: run.timeframe,
         start: run.start_time,
         end: run.end_time,
-        limit: 5000,
       })
       .then((data: CandleResponse[]) => {
         setOhlcCandles(

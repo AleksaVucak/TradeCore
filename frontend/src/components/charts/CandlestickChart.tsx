@@ -45,6 +45,81 @@ function toUnixTimestamp(iso: string): number {
   return Math.floor(new Date(iso).getTime() / 1000);
 }
 
+/** Unique bar opens sorted ascending (seconds), matching candle series `time`. */
+function candleBarOpensSec(candles: OhlcCandle[]): number[] {
+  const secs = candles.map((c) => toUnixTimestamp(c.timestamp));
+  return [...new Set(secs)].sort((a, b) => a - b);
+}
+
+/**
+ * Map a trade instant to the candle bar open it belongs to.
+ * Returns the latest bar open ≤ trade time, or null if the trade is before the
+ * first bar or after the last bar's close window (prevents piling onto the edges).
+ */
+function snapTradeToBarOpenSec(tradeMs: number, barOpensAsc: number[]): number | null {
+  if (barOpensAsc.length === 0) return null;
+  const t = Math.floor(tradeMs / 1000);
+  if (t < barOpensAsc[0]) return null;
+
+  const lastOpen = barOpensAsc[barOpensAsc.length - 1];
+  const barSpan =
+    barOpensAsc.length >= 2
+      ? barOpensAsc[barOpensAsc.length - 1] - barOpensAsc[barOpensAsc.length - 2]
+      : 3600;
+  if (t >= lastOpen + barSpan) return null;
+
+  if (t >= lastOpen) return lastOpen;
+
+  let lo = 0;
+  let hi = barOpensAsc.length - 2;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (barOpensAsc[mid + 1] <= t) lo = mid + 1;
+    else hi = mid - 1;
+  }
+  return barOpensAsc[lo];
+}
+
+type MarkerAgg = {
+  time: number;
+  side: "buy" | "sell";
+  count: number;
+};
+
+function buildTradeMarkersForChart(
+  trades: TradeMarker[],
+  barOpensAsc: number[],
+): SeriesMarker<Time>[] {
+  if (trades.length === 0 || barOpensAsc.length === 0) return [];
+
+  const groups = new Map<string, MarkerAgg>();
+  for (const t of trades) {
+    const barSec = snapTradeToBarOpenSec(new Date(t.timestamp).getTime(), barOpensAsc);
+    if (barSec == null) continue;
+    const side = t.side;
+    const key = `${barSec}:${side}`;
+    const g = groups.get(key);
+    if (g) g.count += 1;
+    else groups.set(key, { time: barSec, side, count: 1 });
+  }
+
+  const rows = Array.from(groups.values());
+  rows.sort((a, b) => a.time - b.time || (a.side === "buy" ? -1 : 1));
+
+  return rows.map((g) => {
+    const isBuy = g.side === "buy";
+    const label = isBuy ? "BUY" : "SELL";
+    const text = g.count > 1 ? `${label} ×${g.count}` : label;
+    return {
+      time: g.time as Time,
+      position: (isBuy ? "belowBar" : "aboveBar") as "belowBar" | "aboveBar",
+      color: isBuy ? "#22c55e" : "#ef4444",
+      shape: (isBuy ? "arrowUp" : "arrowDown") as "arrowUp" | "arrowDown",
+      text,
+    };
+  });
+}
+
 export function CandlestickChart({
   candles,
   trades,
@@ -135,19 +210,8 @@ export function CandlestickChart({
     candleSeries.setData(chartCandles);
 
     if (trades.length > 0) {
-      const markers: SeriesMarker<Time>[] = trades
-        .map((t) => {
-          const isBuy = t.side === "buy";
-          return {
-            time: toUnixTimestamp(t.timestamp) as Time,
-            position: (isBuy ? "belowBar" : "aboveBar") as "belowBar" | "aboveBar",
-            color: isBuy ? "#22c55e" : "#ef4444",
-            shape: (isBuy ? "arrowUp" : "arrowDown") as "arrowUp" | "arrowDown",
-            text: isBuy ? "BUY" : "SELL",
-          };
-        })
-        .sort((a, b) => (a.time as number) - (b.time as number));
-
+      const barOpensAsc = candleBarOpensSec(candles);
+      const markers = buildTradeMarkersForChart(trades, barOpensAsc);
       createSeriesMarkers(candleSeries, markers);
     }
 

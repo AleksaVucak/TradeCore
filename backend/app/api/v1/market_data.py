@@ -24,7 +24,7 @@ from app.tasks.market_data import fetch_candles_task, ingest_candles_task
 
 router = APIRouter()
 
-MAX_CANDLES = 5000
+MAX_CANDLES = 50_000
 
 
 @router.post("/ingest", response_model=IngestResponse)

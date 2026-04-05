@@ -22,7 +22,6 @@ import {
   Area,
   ComposedChart,
   Line,
-  LineChart,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -412,6 +411,37 @@ const CHART_STYLE = {
   },
 };
 
+/** Avoid collapsed Y labels (e.g. every tick "10.0k") when equity moves in a tight band. */
+function formatEquityYTick(v: number, min: number, max: number): string {
+  if (!Number.isFinite(v)) return "";
+  const span = max - min;
+  if (span <= 0 || !Number.isFinite(span)) {
+    return v >= 1000
+      ? `${(v / 1000).toFixed(2)}k`
+      : v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
+  const tight = span < 800 || (max > 0 && span / max < 0.04);
+  if (tight) {
+    return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
+  if (Math.abs(v) >= 1000) {
+    return `${(v / 1000).toFixed(1)}k`;
+  }
+  return String(Math.round(v));
+}
+
+/** More decimal places when drawdown range is tiny so ticks are not all "0.1%". */
+function formatDrawdownYTick(v: number, min: number, max: number): string {
+  if (!Number.isFinite(v)) return "";
+  const span = max - min;
+  if (span <= 0 || !Number.isFinite(span)) {
+    return `${v.toFixed(2)}%`;
+  }
+  if (span < 0.2) return `${v.toFixed(2)}%`;
+  if (span < 2) return `${v.toFixed(1)}%`;
+  return `${v.toFixed(0)}%`;
+}
+
 function EquityComparisonChart({
   runA,
   runB,
@@ -424,6 +454,14 @@ function EquityComparisonChart({
     const sortedB = sortEquity(ensureMinimalCurve(runB));
     return mergeEquitySeries(sortedA, sortedB);
   }, [runA, runB]);
+
+  const equityYBounds = useMemo(() => {
+    const vals = data.flatMap((d) =>
+      [d.equity_a, d.equity_b].filter((x): x is number => x != null),
+    );
+    if (vals.length === 0) return { min: 0, max: 0 };
+    return { min: Math.min(...vals), max: Math.max(...vals) };
+  }, [data]);
 
   if (data.length === 0) {
     return (
@@ -451,7 +489,7 @@ function EquityComparisonChart({
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart
               data={data}
-              margin={{ top: 10, right: 10, left: 28, bottom: 5 }}
+              margin={{ top: 10, right: 10, left: 36, bottom: 5 }}
             >
               <CartesianGrid {...CHART_STYLE.grid} />
               <XAxis
@@ -468,7 +506,7 @@ function EquityComparisonChart({
               />
               <YAxis
                 tickFormatter={(v: number) =>
-                  v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(v)
+                  formatEquityYTick(v, equityYBounds.min, equityYBounds.max)
                 }
                 tick={CHART_STYLE.yTick}
                 axisLine={CHART_STYLE.xAxis}
@@ -515,6 +553,7 @@ function EquityComparisonChart({
                 fillOpacity={0.12}
                 stroke="none"
                 legendType="none"
+                connectNulls
               />
               <Area
                 type="monotone"
@@ -523,6 +562,7 @@ function EquityComparisonChart({
                 fillOpacity={0.12}
                 stroke="none"
                 legendType="none"
+                connectNulls
               />
               <Line
                 type="monotone"
@@ -565,6 +605,14 @@ function DrawdownComparisonChart({
     return mergeDrawdownSeries(ddA, ddB);
   }, [runA, runB]);
 
+  const drawdownYBounds = useMemo(() => {
+    const vals = data.flatMap((d) =>
+      [d.drawdown_a, d.drawdown_b].filter((x): x is number => x != null),
+    );
+    if (vals.length === 0) return { min: 0, max: 0 };
+    return { min: Math.min(...vals), max: Math.max(...vals) };
+  }, [data]);
+
   if (data.length === 0) {
     return (
       <Card className="mt-6">
@@ -589,9 +637,9 @@ function DrawdownComparisonChart({
       <CardContent>
         <div className="h-[300px] w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart
+            <ComposedChart
               data={data}
-              margin={{ top: 10, right: 10, left: 28, bottom: 5 }}
+              margin={{ top: 10, right: 10, left: 36, bottom: 5 }}
             >
               <CartesianGrid {...CHART_STYLE.grid} />
               <XAxis
@@ -607,7 +655,9 @@ function DrawdownComparisonChart({
                 tickLine={CHART_STYLE.xAxis}
               />
               <YAxis
-                tickFormatter={(v: number) => `${v.toFixed(1)}%`}
+                tickFormatter={(v: number) =>
+                  formatDrawdownYTick(v, drawdownYBounds.min, drawdownYBounds.max)
+                }
                 tick={CHART_STYLE.yTick}
                 axisLine={CHART_STYLE.xAxis}
                 tickLine={CHART_STYLE.xAxis}
@@ -642,14 +692,25 @@ function DrawdownComparisonChart({
                   value === "drawdown_a" ? "Run A" : "Run B"
                 }
               />
-              <Line
+              <Area
+                type="monotone"
+                dataKey="drawdown_b"
+                fill="#f97316"
+                fillOpacity={0.12}
+                stroke="none"
+                legendType="none"
+                connectNulls
+                baseLine={0}
+              />
+              <Area
                 type="monotone"
                 dataKey="drawdown_a"
-                stroke="#ef4444"
-                strokeWidth={2}
-                dot={false}
+                fill="#ef4444"
+                fillOpacity={0.12}
+                stroke="none"
+                legendType="none"
                 connectNulls
-                activeDot={{ r: 3 }}
+                baseLine={0}
               />
               <Line
                 type="monotone"
@@ -660,7 +721,16 @@ function DrawdownComparisonChart({
                 connectNulls
                 activeDot={{ r: 3 }}
               />
-            </LineChart>
+              <Line
+                type="monotone"
+                dataKey="drawdown_a"
+                stroke="#ef4444"
+                strokeWidth={2}
+                dot={false}
+                connectNulls
+                activeDot={{ r: 3 }}
+              />
+            </ComposedChart>
           </ResponsiveContainer>
         </div>
       </CardContent>
