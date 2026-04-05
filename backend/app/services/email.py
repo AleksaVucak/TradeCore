@@ -85,7 +85,7 @@ def send_verification_email(user: User, raw_token: str) -> None:
     msg.attach(MIMEText(html_body, "html"))
 
     try:
-        with smtplib.SMTP(settings.mail_smtp_host, settings.mail_smtp_port) as server:
+        with smtplib.SMTP(settings.mail_smtp_host, settings.mail_smtp_port, timeout=10) as server:
             server.ehlo()
             server.starttls()
             server.login(settings.mail_smtp_user, settings.mail_smtp_password)
@@ -93,7 +93,6 @@ def send_verification_email(user: User, raw_token: str) -> None:
         logger.info("verification_email_sent", user_id=user.id, email=user.email)
     except Exception:
         logger.exception("verification_email_failed", user_id=user.id, email=user.email)
-        raise
 
 
 def verify_token(db: Session, raw_token: str) -> User | None:
