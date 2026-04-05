@@ -441,9 +441,21 @@ export type TrainRegimeResponse = {
   task_id: string;
 };
 
+export type TrainStatusResponse = {
+  task_id: string;
+  state: string;
+  model_id: number | null;
+  accuracy: number | null;
+  error: string | null;
+  progress_pct: number | null;
+  phase: string | null;
+};
+
 export const regimesApi = {
   train: (token: string, body: TrainRegimeRequest) =>
     api.post<TrainRegimeResponse>("/api/v1/regimes/train", body, token),
+  getTrainStatus: (token: string, taskId: string) =>
+    api.get<TrainStatusResponse>(`/api/v1/regimes/train/status/${taskId}`, token),
   ensureForRun: (token: string, runId: string) =>
     api.post<EnsureRegimesResponse>(`/api/v1/regimes/run/${runId}/ensure`, {}, token),
   getForRun: (token: string, runId: string) =>

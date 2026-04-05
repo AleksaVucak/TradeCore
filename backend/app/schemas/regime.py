@@ -100,3 +100,15 @@ class TrainRegimeResponse(BaseModel):
 
     status: str
     task_id: str
+
+
+class TrainStatusResponse(BaseModel):
+    """Response for checking training task status (includes progress)."""
+
+    task_id: str
+    state: str
+    model_id: int | None = None
+    accuracy: float | None = None
+    error: str | None = None
+    progress_pct: int | None = None
+    phase: str | None = None

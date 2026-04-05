@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Progress } from "@/components/ui/progress";
 import {
   marketDataApi,
   regimesApi,
@@ -111,6 +112,12 @@ export default function MarketDataPage() {
   const [modelsLoading, setModelsLoading] = useState(false);
   const [trainSubmitting, setTrainSubmitting] = useState(false);
   const [trainTune, setTrainTune] = useState(false);
+  const [trainTaskId, setTrainTaskId] = useState<string | null>(null);
+  const [trainState, setTrainState] = useState<string | null>(null);
+  const [trainProgressPct, setTrainProgressPct] = useState<number | null>(null);
+  const [trainPhase, setTrainPhase] = useState<string | null>(null);
+  const [trainResult, setTrainResult] = useState<{ accuracy: number | null; model_id: number | null; error: string | null } | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const selectedSymbol = useMemo(
     () => symbols.find((symbol) => String(symbol.id) === selectedSymbolId) ?? null,
@@ -155,6 +162,59 @@ export default function MarketDataPage() {
       setModelsLoading(false);
     }
   }
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+
+  const startPolling = useCallback(
+    (taskId: string) => {
+      stopPolling();
+      setTrainTaskId(taskId);
+      setTrainState("PENDING");
+      setTrainProgressPct(0);
+      setTrainPhase("Queued");
+      setTrainResult(null);
+
+      pollRef.current = setInterval(async () => {
+        const token = getToken();
+        if (!token) return;
+        try {
+          const s = await regimesApi.getTrainStatus(token, taskId);
+          setTrainState(s.state);
+          if (s.progress_pct != null) setTrainProgressPct(s.progress_pct);
+          if (s.phase != null) setTrainPhase(s.phase);
+
+          if (s.state === "SUCCESS" && !s.error) {
+            stopPolling();
+            setTrainProgressPct(100);
+            setTrainPhase("Complete");
+            setTrainResult({ accuracy: s.accuracy, model_id: s.model_id, error: null });
+            setTrainTaskId(null);
+            if (selectedSymbolId) {
+              await loadModels(token, Number(selectedSymbolId), timeframe);
+            }
+          } else if (s.state === "FAILURE" || s.error) {
+            stopPolling();
+            setTrainProgressPct(null);
+            setTrainPhase(null);
+            setTrainResult({ accuracy: null, model_id: null, error: s.error || "Training failed" });
+            setTrainTaskId(null);
+          }
+        } catch {
+          // transient error, keep polling
+        }
+      }, 3000);
+    },
+    [stopPolling, selectedSymbolId, timeframe],
+  );
+
+  useEffect(() => {
+    return () => stopPolling();
+  }, [stopPolling]);
 
   useEffect(() => {
     let cancelled = false;
@@ -662,32 +722,26 @@ export default function MarketDataPage() {
                   checked={trainTune}
                   onChange={(e) => setTrainTune(e.target.checked)}
                   className="rounded border-input"
+                  disabled={!!trainTaskId}
                 />
                 Hyperparameter tuning
               </label>
               <Button
-                disabled={trainSubmitting || !selectedSymbolId}
+                disabled={trainSubmitting || !!trainTaskId || !selectedSymbolId}
                 onClick={async () => {
                   const token = getToken();
                   if (!token || !selectedSymbolId) return;
                   setTrainSubmitting(true);
                   setError(null);
                   setNotice(null);
+                  setTrainResult(null);
                   try {
-                    await regimesApi.train(token, {
+                    const res = await regimesApi.train(token, {
                       symbol_id: Number(selectedSymbolId),
                       timeframe,
                       tune: trainTune,
                     });
-                    setNotice(
-                      "Regime model training started. It may take a minute — trained models will appear below once complete.",
-                    );
-                    setTimeout(async () => {
-                      const t = getToken();
-                      if (t && selectedSymbolId) {
-                        await loadModels(t, Number(selectedSymbolId), timeframe);
-                      }
-                    }, 15000);
+                    startPolling(res.task_id);
                   } catch (err) {
                     setError(
                       err instanceof Error ? err.message : "Failed to start training.",
@@ -713,6 +767,50 @@ export default function MarketDataPage() {
                 {modelsLoading ? "Loading…" : "Refresh models"}
               </Button>
             </div>
+
+            {trainTaskId && trainState && (
+              <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-3 space-y-3">
+                <div className="flex items-center gap-3">
+                  <svg className="h-4 w-4 animate-spin text-blue-500 shrink-0" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  <p className="text-sm text-blue-700 dark:text-blue-400">
+                    {trainPhase ?? "Training in progress…"}
+                  </p>
+                  {trainProgressPct != null && (
+                    <span className="ml-auto text-sm font-medium tabular-nums text-blue-700 dark:text-blue-400">
+                      {trainProgressPct}%
+                    </span>
+                  )}
+                </div>
+                <Progress value={trainProgressPct ?? 0} className="h-2" />
+              </div>
+            )}
+
+            {trainResult && !trainResult.error && (
+              <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
+                <p className="text-sm text-emerald-700 dark:text-emerald-400">
+                  Training complete!
+                  {trainResult.accuracy != null && (
+                    <span className="ml-2">
+                      Accuracy: <span className="font-semibold tabular-nums">{(trainResult.accuracy * 100).toFixed(1)}%</span>
+                    </span>
+                  )}
+                  {trainResult.model_id != null && (
+                    <span className="ml-2 text-xs opacity-70">(Model #{trainResult.model_id})</span>
+                  )}
+                </p>
+              </div>
+            )}
+
+            {trainResult?.error && (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3">
+                <p className="text-sm text-destructive">
+                  Training failed: {trainResult.error}
+                </p>
+              </div>
+            )}
 
             {modelsLoading ? (
               <p className="text-sm text-muted-foreground">Loading models…</p>

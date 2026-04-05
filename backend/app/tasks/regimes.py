@@ -108,11 +108,17 @@ def train_regime_model_task(
 ) -> dict[str, Any]:
     """Train a regime classification model in the background.
 
+    Reports progress via update_state so the frontend can show a progress bar.
     Returns a summary dict with model_id, accuracy, etc. on success.
     """
     from datetime import datetime, timezone
 
-    from app.services.ml.training import train_regime_model
+    from app.services.ml.training import (
+        _build_dataset,
+        _fetch_candles,
+        ARTIFACT_DIR,
+        FEATURE_KEYS,
+    )
 
     def _parse_dt(dt_str: str | None) -> datetime | None:
         if not dt_str:
@@ -122,19 +128,155 @@ def train_regime_model_task(
             dt = dt.replace(tzinfo=timezone.utc)
         return dt
 
+    def _progress(pct: int, phase: str) -> None:
+        self.update_state(
+            state="PROGRESS",
+            meta={"progress_pct": pct, "phase": phase},
+        )
+
     db = SessionLocal()
     try:
         start = _parse_dt(start_time)
         end = _parse_dt(end_time)
 
-        result = train_regime_model(
-            db,
+        _progress(5, "Fetching candles")
+        candles = _fetch_candles(db, symbol_id, timeframe, start, end)
+        if len(candles) < 60:
+            raise ValueError(
+                f"Not enough candles to train ({len(candles)}). "
+                "Need at least 60 bars after filtering."
+            )
+
+        _progress(15, "Computing features and labels")
+        X, y, timestamps = _build_dataset(candles)
+        if len(X) < 30:
+            raise ValueError(
+                f"Not enough labeled samples ({len(X)}). "
+                "Need at least 30 usable rows after warmup."
+            )
+
+        from sklearn.ensemble import RandomForestClassifier
+        from sklearn.metrics import accuracy_score, classification_report
+        from sklearn.model_selection import (
+            RandomizedSearchCV,
+            StratifiedKFold,
+            train_test_split,
+        )
+
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42, stratify=y
+        )
+
+        _progress(25, "Training model" + (" with hyperparameter tuning" if tune else ""))
+
+        tuning_info: dict[str, Any] = {}
+        if tune:
+            from app.services.ml.training import DEFAULT_PARAM_GRID
+
+            base_clf = RandomForestClassifier(
+                random_state=42, class_weight="balanced", n_jobs=-1
+            )
+            cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+            search = RandomizedSearchCV(
+                base_clf,
+                param_distributions=DEFAULT_PARAM_GRID,
+                n_iter=30,
+                cv=cv,
+                scoring="f1_weighted",
+                random_state=42,
+                n_jobs=-1,
+                refit=True,
+            )
+            search.fit(X_train, y_train)
+            clf = search.best_estimator_
+
+            best_params = search.best_params_
+            serializable_params = {
+                k: (int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else v)
+                for k, v in best_params.items()
+            }
+            tuning_info = {
+                "tuned": True,
+                "best_params": serializable_params,
+                "cv_best_score": round(float(search.best_score_), 4),
+                "cv_folds": 5,
+                "n_iter": 30,
+            }
+        else:
+            clf = RandomForestClassifier(
+                n_estimators=200, max_depth=12, random_state=42,
+                class_weight="balanced", n_jobs=-1,
+            )
+            clf.fit(X_train, y_train)
+            tuning_info = {
+                "tuned": False,
+                "best_params": {"n_estimators": 200, "max_depth": 12},
+            }
+
+        _progress(80, "Evaluating model")
+        y_pred = clf.predict(X_test)
+        acc = accuracy_score(y_test, y_pred)
+        report = classification_report(y_test, y_pred, output_dict=True, zero_division=0)
+
+        _progress(90, "Saving model artifact")
+        import joblib
+
+        from app.models.ml_model_metadata import MLModelMetadata
+
+        ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+        ts_tag = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        suffix = "_tuned" if tune else ""
+        filename = f"regime_rf{suffix}_{symbol_id}_{timeframe}_{ts_tag}.joblib"
+        artifact_path = str(ARTIFACT_DIR / filename)
+        joblib.dump({"model": clf, "feature_keys": FEATURE_KEYS}, artifact_path)
+
+        training_start = timestamps[0] if timestamps else None
+        training_end = timestamps[-1] if timestamps else None
+
+        meta = MLModelMetadata(
+            name="regime_rf",
             symbol_id=symbol_id,
             timeframe=timeframe,
-            start=start,
-            end=end,
-            tune=tune,
+            training_start=training_start,
+            training_end=training_end,
+            artifact_path=artifact_path,
+            metrics={
+                "accuracy": round(acc, 4),
+                "n_train": len(y_train),
+                "n_test": len(y_test),
+                "classification_report": report,
+                **tuning_info,
+            },
         )
+        db.add(meta)
+        db.commit()
+        db.refresh(meta)
+
+        label_dist: dict[str, int] = {}
+        for lbl in y:
+            label_dist[lbl] = label_dist.get(lbl, 0) + 1
+
+        result = {
+            "model_id": meta.id,
+            "artifact_path": artifact_path,
+            "accuracy": round(acc, 4),
+            "n_train": len(y_train),
+            "n_test": len(y_test),
+            "label_distribution": label_dist,
+            **tuning_info,
+        }
+
+        serializable_report: dict[str, Any] = {}
+        for k, v in report.items():
+            if isinstance(v, dict):
+                serializable_report[k] = {
+                    rk: round(float(rv), 4) if isinstance(rv, float) else rv
+                    for rk, rv in v.items()
+                }
+            else:
+                serializable_report[k] = round(float(v), 4) if isinstance(v, float) else v
+
+        _progress(100, "Complete")
 
         logger.info(
             "regime_model_training_completed",
@@ -143,16 +285,6 @@ def train_regime_model_task(
             model_id=result["model_id"],
             accuracy=result["accuracy"],
         )
-
-        serializable_report = {}
-        for k, v in result.get("classification_report", {}).items():
-            if isinstance(v, dict):
-                serializable_report[k] = {
-                    rk: round(float(rv), 4) if isinstance(rv, float) else rv
-                    for rk, rv in v.items()
-                }
-            else:
-                serializable_report[k] = round(float(v), 4) if isinstance(v, float) else v
 
         return {
             "status": "ok",

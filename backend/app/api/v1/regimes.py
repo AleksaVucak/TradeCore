@@ -22,6 +22,7 @@ from app.schemas.regime import (
     RegimePerformanceResponse,
     TrainRegimeRequest,
     TrainRegimeResponse,
+    TrainStatusResponse,
 )
 from app.services.ml.inference import get_latest_model, label_candles
 from app.services.ml.regime_performance import compute_regime_performance
@@ -341,6 +342,55 @@ def start_regime_training(
     )
 
     return TrainRegimeResponse(status="queued", task_id=result.id)
+
+
+@router.get("/train/status/{task_id}", response_model=TrainStatusResponse)
+def get_training_status(
+    task_id: str,
+    _user_id: int = Depends(get_current_user_id),
+):
+    """Check the status of a regime model training task (includes progress)."""
+    from celery.result import AsyncResult
+
+    from app.celery_app import celery_app
+
+    result = AsyncResult(task_id, app=celery_app)
+    state = result.state
+
+    model_id: int | None = None
+    accuracy: float | None = None
+    error: str | None = None
+    progress_pct: int | None = None
+    phase: str | None = None
+
+    if state == "PROGRESS" and isinstance(result.info, dict):
+        progress_pct = result.info.get("progress_pct")
+        phase = result.info.get("phase")
+    elif state == "SUCCESS" and isinstance(result.result, dict):
+        progress_pct = 100
+        phase = "Complete"
+        model_id = result.result.get("model_id")
+        accuracy = result.result.get("accuracy")
+        if result.result.get("status") == "failed":
+            state = "FAILURE"
+            error = result.result.get("error", "Training failed")
+            progress_pct = None
+            phase = None
+    elif state == "FAILURE":
+        error = str(result.result) if result.result else "Training failed"
+    elif state in ("PENDING", "STARTED"):
+        progress_pct = 0
+        phase = "Queued"
+
+    return TrainStatusResponse(
+        task_id=task_id,
+        state=state,
+        model_id=model_id,
+        accuracy=accuracy,
+        error=error,
+        progress_pct=progress_pct,
+        phase=phase,
+    )
 
 
 @router.get("/models", response_model=ModelListResponse)
