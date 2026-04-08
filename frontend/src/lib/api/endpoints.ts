@@ -311,6 +311,8 @@ export const strategiesApi = {
     id: number,
     body: { config: Record<string, unknown> }
   ) => api.post<StrategyDetail>(`/api/v1/strategies/${id}/versions`, body, token),
+  mlFeatures: (token: string) =>
+    api.get<string[]>("/api/v1/strategies/ml-features", token),
 };
 
 export type IngestResponse = { message: string; task_id: string | null };

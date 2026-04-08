@@ -13,6 +13,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { strategiesApi, type StrategyListItem } from "@/lib/api/endpoints";
 import { getToken } from "@/lib/auth";
 
+const TYPE_LABELS: Record<string, string> = {
+  rsi_ma: "RSI + MA",
+  ml_signal: "ML Signal",
+};
+
 export default function StrategiesPage() {
   const [strategies, setStrategies] = useState<StrategyListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -128,7 +133,7 @@ export default function StrategiesPage() {
                         </td>
                         <td className="py-2 pr-4 align-middle">
                           <span className="rounded bg-muted px-2 py-0.5 text-xs uppercase tracking-wide">
-                            {s.strategy_type}
+                            {TYPE_LABELS[s.strategy_type] ?? s.strategy_type}
                           </span>
                         </td>
                         <td className="py-2 pr-4 align-middle text-muted-foreground hidden sm:table-cell">

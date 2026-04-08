@@ -14,12 +14,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  regimesApi,
   strategiesApi,
+  type ModelInfoOut,
   type StrategyDetail,
 } from "@/lib/api/endpoints";
 import { getToken } from "@/lib/auth";
 
-type ConfigForm = {
+// ---------------------------------------------------------------------------
+// RSI+MA config form
+// ---------------------------------------------------------------------------
+type RsiMaConfigForm = {
   rsi_period: string;
   rsi_buy_threshold: string;
   rsi_sell_threshold: string;
@@ -31,6 +36,82 @@ type ConfigForm = {
   slippage_rate: string;
 };
 
+function rsiMaFormFromConfig(cfg: Record<string, unknown>): RsiMaConfigForm {
+  return {
+    rsi_period: String(cfg.rsi_period ?? 14),
+    rsi_buy_threshold: String(cfg.rsi_buy_threshold ?? 50),
+    rsi_sell_threshold: String(cfg.rsi_sell_threshold ?? 50),
+    ma_period: String(cfg.ma_period ?? 20),
+    position_size_pct: String(Number(cfg.position_size_pct ?? 1.0) * 100),
+    stop_loss_pct: String(cfg.stop_loss_pct ?? 2.0),
+    take_profit_pct: String(cfg.take_profit_pct ?? 5.0),
+    fee_rate: String(cfg.fee_rate ?? 0.001),
+    slippage_rate: String(cfg.slippage_rate ?? 0.0005),
+  };
+}
+
+function rsiMaFormToPayload(f: RsiMaConfigForm): Record<string, unknown> {
+  return {
+    rsi_period: Number(f.rsi_period) || undefined,
+    rsi_buy_threshold: Number(f.rsi_buy_threshold) || undefined,
+    rsi_sell_threshold: Number(f.rsi_sell_threshold) || undefined,
+    ma_period: Number(f.ma_period) || undefined,
+    position_size_pct: f.position_size_pct.trim() === "" ? undefined : Number(f.position_size_pct) / 100,
+    stop_loss_pct: Number(f.stop_loss_pct) || undefined,
+    take_profit_pct: Number(f.take_profit_pct) || undefined,
+    fee_rate: Number(f.fee_rate) || undefined,
+    slippage_rate: Number(f.slippage_rate) || undefined,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// ML Signal config form
+// ---------------------------------------------------------------------------
+type MlSignalConfigForm = {
+  model_id: string;
+  long_threshold: string;
+  exit_threshold: string;
+  position_size_pct: string;
+  stop_loss_pct: string;
+  take_profit_pct: string;
+  fee_rate: string;
+  slippage_rate: string;
+};
+
+function mlSignalFormFromConfig(cfg: Record<string, unknown>): MlSignalConfigForm {
+  return {
+    model_id: String(cfg.model_id ?? ""),
+    long_threshold: String(cfg.long_threshold ?? 0.55),
+    exit_threshold: String(cfg.exit_threshold ?? 0.45),
+    position_size_pct: String(Number(cfg.position_size_pct ?? 1.0) * 100),
+    stop_loss_pct: String(cfg.stop_loss_pct ?? 3.0),
+    take_profit_pct: String(cfg.take_profit_pct ?? 6.0),
+    fee_rate: String(cfg.fee_rate ?? 0.001),
+    slippage_rate: String(cfg.slippage_rate ?? 0.0005),
+  };
+}
+
+function mlSignalFormToPayload(f: MlSignalConfigForm, features: string[]): Record<string, unknown> {
+  return {
+    model_id: Number(f.model_id),
+    features,
+    long_threshold: Number(f.long_threshold),
+    exit_threshold: Number(f.exit_threshold),
+    position_size_pct: f.position_size_pct.trim() === "" ? undefined : Number(f.position_size_pct) / 100,
+    stop_loss_pct: Number(f.stop_loss_pct) || undefined,
+    take_profit_pct: Number(f.take_profit_pct) || undefined,
+    fee_rate: Number(f.fee_rate) || undefined,
+    slippage_rate: Number(f.slippage_rate) || undefined,
+  };
+}
+
+const DEFAULT_ML_FEATURES = [
+  "rsi_14", "sma_20", "macd", "bbands_width", "atr_14", "log_return_1",
+];
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
 export default function StrategyDetailPage() {
   const router = useRouter();
   const pathname = usePathname();
@@ -45,23 +126,26 @@ export default function StrategyDetailPage() {
   const [metaDescription, setMetaDescription] = useState("");
   const [savingMeta, setSavingMeta] = useState(false);
 
-  const [configForm, setConfigForm] = useState<ConfigForm | null>(null);
+  // RSI+MA
+  const [rsiForm, setRsiForm] = useState<RsiMaConfigForm | null>(null);
+  // ML Signal
+  const [mlForm, setMlForm] = useState<MlSignalConfigForm | null>(null);
+  const [selectedFeatures, setSelectedFeatures] = useState<string[]>(DEFAULT_ML_FEATURES);
+  const [featureCatalog, setFeatureCatalog] = useState<string[]>([]);
+  const [models, setModels] = useState<ModelInfoOut[]>([]);
+
   const [savingConfig, setSavingConfig] = useState(false);
 
   const [token, setToken] = useState<string | null>(null);
   const hasValidParams = !!token && !!strategyId && !Number.isNaN(strategyId);
 
   useEffect(() => {
-    // Read token only on the client after mount to avoid SSR/client mismatches.
-    Promise.resolve().then(() => {
-      setToken(getToken());
-    });
+    Promise.resolve().then(() => setToken(getToken()));
   }, []);
 
+  // Load strategy
   useEffect(() => {
-    if (!hasValidParams || !token) {
-      return;
-    }
+    if (!hasValidParams || !token) return;
     strategiesApi
       .get(token, strategyId)
       .then((data) => {
@@ -70,30 +154,15 @@ export default function StrategyDetailPage() {
         setMetaDescription(data.description ?? "");
         const cfg = (data.versions.find((v) => v.is_active) ?? data.versions[0])
           ?.config as Record<string, unknown> | undefined;
-        if (cfg) {
-          setConfigForm({
-            rsi_period: String(cfg.rsi_period ?? 14),
-            rsi_buy_threshold: String(cfg.rsi_buy_threshold ?? 50),
-            rsi_sell_threshold: String(cfg.rsi_sell_threshold ?? 50),
-            ma_period: String(cfg.ma_period ?? 20),
-            position_size_pct: String(Number(cfg.position_size_pct ?? 1.0) * 100),
-            stop_loss_pct: String(cfg.stop_loss_pct ?? 2.0),
-            take_profit_pct: String(cfg.take_profit_pct ?? 5.0),
-            fee_rate: String(cfg.fee_rate ?? 0.001),
-            slippage_rate: String(cfg.slippage_rate ?? 0.0005),
-          });
-        } else {
-          setConfigForm({
-            rsi_period: "14",
-            rsi_buy_threshold: "50",
-            rsi_sell_threshold: "50",
-            ma_period: "20",
-            position_size_pct: "100",
-            stop_loss_pct: "2.0",
-            take_profit_pct: "5.0",
-            fee_rate: "0.001",
-            slippage_rate: "0.0005",
-          });
+
+        if (data.strategy_type === "ml_signal" && cfg) {
+          setMlForm(mlSignalFormFromConfig(cfg));
+          const feats = cfg.features;
+          if (Array.isArray(feats)) setSelectedFeatures(feats as string[]);
+          setRsiForm(null);
+        } else if (cfg) {
+          setRsiForm(rsiMaFormFromConfig(cfg));
+          setMlForm(null);
         }
       })
       .catch((err) => {
@@ -103,6 +172,16 @@ export default function StrategyDetailPage() {
       .finally(() => setLoading(false));
   }, [strategyId, token, hasValidParams]);
 
+  // Fetch ML metadata when strategy is ml_signal
+  useEffect(() => {
+    if (!token || !strategy || strategy.strategy_type !== "ml_signal") return;
+    strategiesApi.mlFeatures(token).then(setFeatureCatalog).catch(() => {});
+    regimesApi.listModels(token).then((r) => setModels(r.models)).catch(() => {});
+  }, [token, strategy]);
+
+  // ---------------------------------------------------------------------------
+  // Handlers
+  // ---------------------------------------------------------------------------
   function handleMetaSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!strategy || !token) return;
@@ -113,72 +192,75 @@ export default function StrategyDetailPage() {
         name: metaName.trim() || undefined,
         description: metaDescription.trim() || null,
       })
-      .then((updated) => {
-        setStrategy(updated);
-      })
-      .catch((err) => {
-        const msg = err instanceof Error ? err.message : "Failed to update strategy.";
-        setError(msg);
-      })
+      .then((updated) => setStrategy(updated))
+      .catch((err) => setError(err instanceof Error ? err.message : "Failed to update strategy."))
       .finally(() => setSavingMeta(false));
   }
 
-  function handleConfigChange(
-    e: React.ChangeEvent<HTMLInputElement>,
-  ) {
-    const { name, value } = e.target;
-    setConfigForm((prev) => (prev ? { ...prev, [name]: value } : prev));
+  function handleRsiChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const { name: field, value } = e.target;
+    setRsiForm((prev) => (prev ? { ...prev, [field]: value } : prev));
+  }
+
+  function handleMlChange(e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) {
+    const { name: field, value } = e.target;
+    setMlForm((prev) => (prev ? { ...prev, [field]: value } : prev));
+  }
+
+  function toggleFeature(feat: string) {
+    setSelectedFeatures((prev) =>
+      prev.includes(feat) ? prev.filter((f) => f !== feat) : [...prev, feat],
+    );
   }
 
   function handleConfigSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!strategy || !token || !configForm) return;
+    if (!strategy || !token) return;
     setSavingConfig(true);
     setError(null);
-    const payload = {
-      config: {
-        rsi_period: Number(configForm.rsi_period) || undefined,
-        rsi_buy_threshold: Number(configForm.rsi_buy_threshold) || undefined,
-        rsi_sell_threshold: Number(configForm.rsi_sell_threshold) || undefined,
-        ma_period: Number(configForm.ma_period) || undefined,
-        position_size_pct:
-          configForm.position_size_pct.trim() === ""
-            ? undefined
-            : Number(configForm.position_size_pct) / 100,
-        stop_loss_pct: Number(configForm.stop_loss_pct) || undefined,
-        take_profit_pct: Number(configForm.take_profit_pct) || undefined,
-        fee_rate: Number(configForm.fee_rate) || undefined,
-        slippage_rate: Number(configForm.slippage_rate) || undefined,
-      },
-    };
+
+    let configPayload: Record<string, unknown>;
+    if (strategy.strategy_type === "ml_signal" && mlForm) {
+      if (!mlForm.model_id) {
+        setError("Please select a trained ML model.");
+        setSavingConfig(false);
+        return;
+      }
+      if (selectedFeatures.length === 0) {
+        setError("Please select at least one feature.");
+        setSavingConfig(false);
+        return;
+      }
+      configPayload = mlSignalFormToPayload(mlForm, selectedFeatures);
+    } else if (rsiForm) {
+      configPayload = rsiMaFormToPayload(rsiForm);
+    } else {
+      setSavingConfig(false);
+      return;
+    }
+
     strategiesApi
-      .createVersion(token, strategy.id, payload)
+      .createVersion(token, strategy.id, { config: configPayload })
       .then((updated) => {
         setStrategy(updated);
         const cfg = (updated.versions.find((v) => v.is_active) ?? updated.versions[0])
           ?.config as Record<string, unknown> | undefined;
-        if (cfg) {
-          setConfigForm({
-            rsi_period: String(cfg.rsi_period ?? 14),
-            rsi_buy_threshold: String(cfg.rsi_buy_threshold ?? 30),
-            rsi_sell_threshold: String(cfg.rsi_sell_threshold ?? 70),
-            ma_period: String(cfg.ma_period ?? 20),
-            position_size_pct: String(Number(cfg.position_size_pct ?? 1.0) * 100),
-            stop_loss_pct: String(cfg.stop_loss_pct ?? 2.0),
-            take_profit_pct: String(cfg.take_profit_pct ?? 5.0),
-            fee_rate: String(cfg.fee_rate ?? 0.001),
-            slippage_rate: String(cfg.slippage_rate ?? 0.0005),
-          });
+        if (!cfg) return;
+        if (updated.strategy_type === "ml_signal") {
+          setMlForm(mlSignalFormFromConfig(cfg));
+          if (Array.isArray(cfg.features)) setSelectedFeatures(cfg.features as string[]);
+        } else {
+          setRsiForm(rsiMaFormFromConfig(cfg));
         }
         router.refresh();
       })
-      .catch((err) => {
-        const msg = err instanceof Error ? err.message : "Failed to create new version.";
-        setError(msg);
-      })
+      .catch((err) => setError(err instanceof Error ? err.message : "Failed to create new version."))
       .finally(() => setSavingConfig(false));
   }
 
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b border-border px-6 py-4">
@@ -209,15 +291,9 @@ export default function StrategyDetailPage() {
       </header>
       <main className="container mx-auto max-w-5xl px-6 py-8 space-y-6">
         {!hasValidParams && (
-          <p className="text-sm text-destructive">
-            Missing strategy id or not authenticated.
-          </p>
+          <p className="text-sm text-destructive">Missing strategy id or not authenticated.</p>
         )}
-        {error && hasValidParams && (
-          <p className="text-sm text-destructive">
-            {error}
-          </p>
-        )}
+        {error && hasValidParams && <p className="text-sm text-destructive">{error}</p>}
         {!hasValidParams ? (
           <p className="text-sm text-muted-foreground">
             Unable to load a strategy without a valid id and authentication.
@@ -228,6 +304,7 @@ export default function StrategyDetailPage() {
           <p className="text-sm text-muted-foreground">Strategy not found.</p>
         ) : (
           <>
+            {/* ---- Meta card ---- */}
             <Card>
               <CardHeader>
                 <CardTitle>Strategy details</CardTitle>
@@ -240,27 +317,15 @@ export default function StrategyDetailPage() {
                 <form className="space-y-4" onSubmit={handleMetaSubmit}>
                   <div className="space-y-1.5 max-w-md">
                     <Label htmlFor="meta-name">Name</Label>
-                    <Input
-                      id="meta-name"
-                      value={metaName}
-                      onChange={(e) => setMetaName(e.target.value)}
-                      required
-                    />
+                    <Input id="meta-name" value={metaName} onChange={(e) => setMetaName(e.target.value)} required />
                   </div>
                   <div className="space-y-1.5 max-w-md">
                     <Label htmlFor="meta-description">Description</Label>
-                    <Input
-                      id="meta-description"
-                      value={metaDescription}
-                      onChange={(e) => setMetaDescription(e.target.value)}
-                      placeholder="Optional description"
-                    />
+                    <Input id="meta-description" value={metaDescription} onChange={(e) => setMetaDescription(e.target.value)} placeholder="Optional description" />
                   </div>
                   <div className="space-y-1.5">
                     <Label>Type</Label>
-                    <p className="text-sm text-muted-foreground uppercase">
-                      {strategy.strategy_type}
-                    </p>
+                    <p className="text-sm text-muted-foreground uppercase">{strategy.strategy_type}</p>
                   </div>
                   <div className="flex items-center justify-end gap-3 pt-2">
                     <Button type="submit" size="sm" disabled={savingMeta || !token}>
@@ -271,6 +336,7 @@ export default function StrategyDetailPage() {
               </CardContent>
             </Card>
 
+            {/* ---- Config card ---- */}
             <Card>
               <CardHeader>
                 <CardTitle>Active version config</CardTitle>
@@ -280,52 +346,23 @@ export default function StrategyDetailPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                {strategy.strategy_type !== "rsi_ma" ? (
-                  <p className="text-sm text-muted-foreground">
-                    Editing is currently only supported for RSI + MA strategies.
-                  </p>
-                ) : !configForm ? (
-                  <p className="text-sm text-muted-foreground">Loading config…</p>
-                ) : (
+                {/* RSI+MA config editor */}
+                {strategy.strategy_type === "rsi_ma" && rsiForm && (
                   <form className="space-y-6" onSubmit={handleConfigSubmit}>
                     <div className="space-y-3">
                       <h2 className="text-sm font-semibold text-muted-foreground">RSI</h2>
                       <div className="grid gap-3 md:grid-cols-3">
                         <div className="space-y-1.5">
                           <Label htmlFor="rsi_period">RSI period</Label>
-                          <Input
-                            id="rsi_period"
-                            name="rsi_period"
-                            type="number"
-                            min={2}
-                            max={100}
-                            value={configForm.rsi_period}
-                            onChange={handleConfigChange}
-                          />
+                          <Input id="rsi_period" name="rsi_period" type="number" min={2} max={100} value={rsiForm.rsi_period} onChange={handleRsiChange} />
                         </div>
                         <div className="space-y-1.5">
                           <Label htmlFor="rsi_buy_threshold">Buy threshold</Label>
-                          <Input
-                            id="rsi_buy_threshold"
-                            name="rsi_buy_threshold"
-                            type="number"
-                            min={0}
-                            max={100}
-                            value={configForm.rsi_buy_threshold}
-                            onChange={handleConfigChange}
-                          />
+                          <Input id="rsi_buy_threshold" name="rsi_buy_threshold" type="number" min={0} max={100} value={rsiForm.rsi_buy_threshold} onChange={handleRsiChange} />
                         </div>
                         <div className="space-y-1.5">
                           <Label htmlFor="rsi_sell_threshold">Sell threshold</Label>
-                          <Input
-                            id="rsi_sell_threshold"
-                            name="rsi_sell_threshold"
-                            type="number"
-                            min={0}
-                            max={100}
-                            value={configForm.rsi_sell_threshold}
-                            onChange={handleConfigChange}
-                          />
+                          <Input id="rsi_sell_threshold" name="rsi_sell_threshold" type="number" min={0} max={100} value={rsiForm.rsi_sell_threshold} onChange={handleRsiChange} />
                         </div>
                       </div>
                     </div>
@@ -334,64 +371,25 @@ export default function StrategyDetailPage() {
                       <h2 className="text-sm font-semibold text-muted-foreground">Trend filter</h2>
                       <div className="space-y-1.5 max-w-xs">
                         <Label htmlFor="ma_period">MA period</Label>
-                        <Input
-                          id="ma_period"
-                          name="ma_period"
-                          type="number"
-                          min={1}
-                          max={500}
-                          value={configForm.ma_period}
-                          onChange={handleConfigChange}
-                        />
+                        <Input id="ma_period" name="ma_period" type="number" min={1} max={500} value={rsiForm.ma_period} onChange={handleRsiChange} />
                       </div>
                     </div>
 
                     <div className="space-y-3">
-                      <h2 className="text-sm font-semibold text-muted-foreground">
-                        Position &amp; risk
-                      </h2>
+                      <h2 className="text-sm font-semibold text-muted-foreground">Position &amp; risk</h2>
                       <div className="grid gap-3 md:grid-cols-3">
                         <div className="space-y-1.5">
                           <Label htmlFor="position_size_pct">Position size (%)</Label>
-                          <Input
-                            id="position_size_pct"
-                            name="position_size_pct"
-                            type="number"
-                            min={0.01}
-                            max={100}
-                            step={0.01}
-                            value={configForm.position_size_pct}
-                            onChange={handleConfigChange}
-                          />
-                          <p className="text-xs text-muted-foreground">
-                            Enter `100` to use the full account balance per trade.
-                          </p>
+                          <Input id="position_size_pct" name="position_size_pct" type="number" min={0.01} max={100} step={0.01} value={rsiForm.position_size_pct} onChange={handleRsiChange} />
+                          <p className="text-xs text-muted-foreground">Enter `100` to use the full account balance per trade.</p>
                         </div>
                         <div className="space-y-1.5">
                           <Label htmlFor="stop_loss_pct">Stop loss (%)</Label>
-                          <Input
-                            id="stop_loss_pct"
-                            name="stop_loss_pct"
-                            type="number"
-                            min={0}
-                            max={100}
-                            step={0.1}
-                            value={configForm.stop_loss_pct}
-                            onChange={handleConfigChange}
-                          />
+                          <Input id="stop_loss_pct" name="stop_loss_pct" type="number" min={0} max={100} step={0.1} value={rsiForm.stop_loss_pct} onChange={handleRsiChange} />
                         </div>
                         <div className="space-y-1.5">
                           <Label htmlFor="take_profit_pct">Take profit (%)</Label>
-                          <Input
-                            id="take_profit_pct"
-                            name="take_profit_pct"
-                            type="number"
-                            min={0}
-                            max={100}
-                            step={0.1}
-                            value={configForm.take_profit_pct}
-                            onChange={handleConfigChange}
-                          />
+                          <Input id="take_profit_pct" name="take_profit_pct" type="number" min={0} max={100} step={0.1} value={rsiForm.take_profit_pct} onChange={handleRsiChange} />
                         </div>
                       </div>
                     </div>
@@ -401,47 +399,157 @@ export default function StrategyDetailPage() {
                       <div className="grid gap-3 md:grid-cols-2">
                         <div className="space-y-1.5">
                           <Label htmlFor="fee_rate">Fee rate (fraction)</Label>
-                          <Input
-                            id="fee_rate"
-                            name="fee_rate"
-                            type="number"
-                            min={0}
-                            max={1}
-                            step={0.0001}
-                            value={configForm.fee_rate}
-                            onChange={handleConfigChange}
-                          />
+                          <Input id="fee_rate" name="fee_rate" type="number" min={0} max={1} step={0.0001} value={rsiForm.fee_rate} onChange={handleRsiChange} />
                         </div>
                         <div className="space-y-1.5">
                           <Label htmlFor="slippage_rate">Slippage rate (fraction)</Label>
-                          <Input
-                            id="slippage_rate"
-                            name="slippage_rate"
-                            type="number"
-                            min={0}
-                            max={1}
-                            step={0.0001}
-                            value={configForm.slippage_rate}
-                            onChange={handleConfigChange}
-                          />
+                          <Input id="slippage_rate" name="slippage_rate" type="number" min={0} max={1} step={0.0001} value={rsiForm.slippage_rate} onChange={handleRsiChange} />
                         </div>
                       </div>
                     </div>
 
                     <div className="flex items-center justify-end gap-3 pt-2">
-                      <Button
-                        type="submit"
-                        size="sm"
-                        disabled={savingConfig || !token}
-                      >
+                      <Button type="submit" size="sm" disabled={savingConfig || !token}>
                         {savingConfig ? "Saving…" : "Save as new version"}
                       </Button>
                     </div>
                   </form>
                 )}
+
+                {/* ML Signal config editor */}
+                {strategy.strategy_type === "ml_signal" && mlForm && (
+                  <form className="space-y-6" onSubmit={handleConfigSubmit}>
+                    {/* Model picker */}
+                    <div className="space-y-3">
+                      <h2 className="text-sm font-semibold text-muted-foreground">Model</h2>
+                      <div className="space-y-1.5 max-w-md">
+                        <Label htmlFor="model_id">Trained model</Label>
+                        <select
+                          id="model_id"
+                          name="model_id"
+                          value={mlForm.model_id}
+                          onChange={handleMlChange}
+                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        >
+                          <option value="">Select a model…</option>
+                          {models.map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.name} — acc{" "}
+                              {m.accuracy != null ? `${(m.accuracy * 100).toFixed(1)}%` : "n/a"}{" "}
+                              ({m.timeframe ?? "?"})
+                            </option>
+                          ))}
+                        </select>
+                        {models.length === 0 && (
+                          <p className="text-xs text-muted-foreground">
+                            No trained models found. Train one from the{" "}
+                            <Link href="/market-data" className="underline text-primary">Market data</Link> page first.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Feature selection */}
+                    <div className="space-y-3">
+                      <h2 className="text-sm font-semibold text-muted-foreground">Features</h2>
+                      <p className="text-xs text-muted-foreground">
+                        Select the features your model was trained on. These must match the training feature set.
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {(featureCatalog.length > 0 ? featureCatalog : DEFAULT_ML_FEATURES).map((feat) => {
+                          const active = selectedFeatures.includes(feat);
+                          return (
+                            <button
+                              key={feat}
+                              type="button"
+                              onClick={() => toggleFeature(feat)}
+                              className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                                active
+                                  ? "border-primary bg-primary/10 text-primary"
+                                  : "border-input text-muted-foreground hover:bg-accent"
+                              }`}
+                            >
+                              {feat}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {selectedFeatures.length} feature{selectedFeatures.length !== 1 ? "s" : ""} selected
+                      </p>
+                    </div>
+
+                    {/* Thresholds */}
+                    <div className="space-y-3">
+                      <h2 className="text-sm font-semibold text-muted-foreground">Signal thresholds</h2>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div className="space-y-1.5">
+                          <Label htmlFor="long_threshold">Long threshold</Label>
+                          <Input id="long_threshold" name="long_threshold" type="number" min={0} max={1} step={0.01} value={mlForm.long_threshold} onChange={handleMlChange} />
+                          <p className="text-xs text-muted-foreground">Enter long when P(up) &ge; this value</p>
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="exit_threshold">Exit threshold</Label>
+                          <Input id="exit_threshold" name="exit_threshold" type="number" min={0} max={1} step={0.01} value={mlForm.exit_threshold} onChange={handleMlChange} />
+                          <p className="text-xs text-muted-foreground">Exit position when P(up) &le; this value</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Position & risk */}
+                    <div className="space-y-3">
+                      <h2 className="text-sm font-semibold text-muted-foreground">Position &amp; risk</h2>
+                      <div className="grid gap-3 md:grid-cols-3">
+                        <div className="space-y-1.5">
+                          <Label htmlFor="ml_position_size_pct">Position size (%)</Label>
+                          <Input id="ml_position_size_pct" name="position_size_pct" type="number" min={0.01} max={100} step={0.01} value={mlForm.position_size_pct} onChange={handleMlChange} />
+                          <p className="text-xs text-muted-foreground">Enter `100` to use the full account balance per trade.</p>
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="ml_stop_loss_pct">Stop loss (%)</Label>
+                          <Input id="ml_stop_loss_pct" name="stop_loss_pct" type="number" min={0} max={100} step={0.1} value={mlForm.stop_loss_pct} onChange={handleMlChange} />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="ml_take_profit_pct">Take profit (%)</Label>
+                          <Input id="ml_take_profit_pct" name="take_profit_pct" type="number" min={0} max={100} step={0.1} value={mlForm.take_profit_pct} onChange={handleMlChange} />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Execution */}
+                    <div className="space-y-3">
+                      <h2 className="text-sm font-semibold text-muted-foreground">Execution</h2>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div className="space-y-1.5">
+                          <Label htmlFor="ml_fee_rate">Fee rate (fraction)</Label>
+                          <Input id="ml_fee_rate" name="fee_rate" type="number" min={0} max={1} step={0.0001} value={mlForm.fee_rate} onChange={handleMlChange} />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="ml_slippage_rate">Slippage rate (fraction)</Label>
+                          <Input id="ml_slippage_rate" name="slippage_rate" type="number" min={0} max={1} step={0.0001} value={mlForm.slippage_rate} onChange={handleMlChange} />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-3 pt-2">
+                      <Button type="submit" size="sm" disabled={savingConfig || !token}>
+                        {savingConfig ? "Saving…" : "Save as new version"}
+                      </Button>
+                    </div>
+                  </form>
+                )}
+
+                {/* Unsupported type fallback */}
+                {strategy.strategy_type !== "rsi_ma" &&
+                  strategy.strategy_type !== "ml_signal" && (
+                    <p className="text-sm text-muted-foreground">
+                      Editing is not yet supported for &quot;{strategy.strategy_type}&quot; strategies.
+                    </p>
+                  )}
               </CardContent>
             </Card>
 
+            {/* ---- Version history card ---- */}
             <Card>
               <CardHeader>
                 <CardTitle>Version history</CardTitle>
@@ -467,9 +575,7 @@ export default function StrategyDetailPage() {
                           .sort((a, b) => b.version_number - a.version_number)
                           .map((v) => (
                             <tr key={v.id} className="border-b border-border last:border-0">
-                              <td className="py-2 pr-4 align-middle">
-                                v{v.version_number}
-                              </td>
+                              <td className="py-2 pr-4 align-middle">v{v.version_number}</td>
                               <td className="py-2 pr-4 align-middle text-muted-foreground">
                                 {new Date(v.created_at).toLocaleString()}
                               </td>
@@ -496,4 +602,3 @@ export default function StrategyDetailPage() {
     </div>
   );
 }
-

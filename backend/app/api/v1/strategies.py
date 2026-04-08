@@ -12,7 +12,7 @@ from app.schemas.strategy import (
     StrategyListItem,
     UpdateStrategyRequest,
 )
-from app.schemas.strategy_config import validate_strategy_config
+from app.schemas.strategy_config import ML_FEATURE_CATALOG, validate_strategy_config
 
 logger = get_logger(__name__)
 
@@ -43,6 +43,12 @@ def _validate_strategy_config_or_422(strategy_type: str, config: dict):
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
+
+
+@router.get("/ml-features", response_model=list[str])
+def list_ml_features() -> list[str]:
+    """Return the canonical list of ML features the platform supports."""
+    return ML_FEATURE_CATALOG
 
 
 @router.get("", response_model=list[StrategyListItem])
