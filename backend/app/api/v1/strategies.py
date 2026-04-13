@@ -5,6 +5,11 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.logging import get_logger
 from app.dependencies import get_current_user_id, get_db
 from app.models.strategy import Strategy, StrategyVersion
+from app.schemas.signal_model import (
+    TrainSignalRequest,
+    TrainSignalResponse,
+    TrainSignalStatusResponse,
+)
 from app.schemas.strategy import (
     CreateStrategyRequest,
     CreateStrategyVersionRequest,
@@ -238,3 +243,115 @@ def delete_strategy(
     db.commit()
     logger.info("strategy_deleted", strategy_id=strategy_id, user_id=user_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
+# ML Signal model training endpoints (Phase 16.2)
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/ml-signal/train",
+    response_model=TrainSignalResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def start_signal_training(
+    body: TrainSignalRequest,
+    _user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Start training an ML signal model in the background.
+
+    Enqueues a Celery task and returns immediately with a task ID.
+    The trained model will appear in GET /regimes/models once complete.
+    """
+    from app.models.symbol import Symbol
+
+    symbol = db.query(Symbol).filter(Symbol.id == body.symbol_id).first()
+    if symbol is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Symbol with id {body.symbol_id} not found",
+        )
+
+    unknown = set(body.features) - set(ML_FEATURE_CATALOG)
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unknown features: {sorted(unknown)}. Allowed: {ML_FEATURE_CATALOG}",
+        )
+
+    from app.tasks.signal_model import train_signal_model_task
+
+    result = train_signal_model_task.apply_async(
+        kwargs={
+            "symbol_id": body.symbol_id,
+            "timeframe": body.timeframe,
+            "feature_names": body.features,
+            "start_time": body.start,
+            "end_time": body.end,
+            "tune": body.tune,
+            "horizon": body.horizon,
+        },
+    )
+
+    logger.info(
+        "signal_training_enqueued",
+        task_id=result.id,
+        symbol_id=body.symbol_id,
+        timeframe=body.timeframe,
+        features=body.features,
+        tune=body.tune,
+        horizon=body.horizon,
+    )
+
+    return TrainSignalResponse(status="queued", task_id=result.id)
+
+
+@router.get("/ml-signal/train/status/{task_id}", response_model=TrainSignalStatusResponse)
+def get_signal_training_status(
+    task_id: str,
+    _user_id: int = Depends(get_current_user_id),
+):
+    """Check the status of an ML signal model training task."""
+    from celery.result import AsyncResult
+
+    from app.celery_app import celery_app
+
+    result = AsyncResult(task_id, app=celery_app)
+    state = result.state
+
+    model_id: int | None = None
+    accuracy: float | None = None
+    error: str | None = None
+    progress_pct: int | None = None
+    phase: str | None = None
+
+    if state == "PROGRESS" and isinstance(result.info, dict):
+        progress_pct = result.info.get("progress_pct")
+        phase = result.info.get("phase")
+    elif state == "SUCCESS" and isinstance(result.result, dict):
+        progress_pct = 100
+        phase = "Complete"
+        model_id = result.result.get("model_id")
+        accuracy = result.result.get("accuracy")
+        if result.result.get("status") == "failed":
+            state = "FAILURE"
+            error = result.result.get("error", "Training failed")
+            progress_pct = None
+            phase = None
+    elif state == "FAILURE":
+        error = str(result.result) if result.result else "Training failed"
+    elif state in ("PENDING", "STARTED"):
+        progress_pct = 0
+        phase = "Queued"
+
+    return TrainSignalStatusResponse(
+        task_id=task_id,
+        state=state,
+        model_id=model_id,
+        accuracy=accuracy,
+        error=error,
+        progress_pct=progress_pct,
+        phase=phase,
+    )

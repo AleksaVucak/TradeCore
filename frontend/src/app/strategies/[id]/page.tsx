@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Card,
   CardContent,
@@ -16,9 +16,12 @@ import { Label } from "@/components/ui/label";
 import {
   regimesApi,
   strategiesApi,
+  symbolsApi,
   type ModelInfoOut,
   type StrategyDetail,
+  type Symbol,
 } from "@/lib/api/endpoints";
+import { Progress } from "@/components/ui/progress";
 import { getToken } from "@/lib/auth";
 
 // ---------------------------------------------------------------------------
@@ -136,12 +139,86 @@ export default function StrategyDetailPage() {
 
   const [savingConfig, setSavingConfig] = useState(false);
 
+  // Signal model training state
+  const [symbols, setSymbols] = useState<Symbol[]>([]);
+  const [trainSubmitting, setTrainSubmitting] = useState(false);
+  const [trainTune, setTrainTune] = useState(false);
+  const [trainHorizon, setTrainHorizon] = useState("5");
+  const [trainTaskId, setTrainTaskId] = useState<string | null>(null);
+  const [trainState, setTrainState] = useState<string | null>(null);
+  const [trainProgressPct, setTrainProgressPct] = useState<number | null>(null);
+  const [trainPhase, setTrainPhase] = useState<string | null>(null);
+  const [trainResult, setTrainResult] = useState<{
+    accuracy: number | null;
+    model_id: number | null;
+    error: string | null;
+  } | null>(null);
+  const trainPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const [token, setToken] = useState<string | null>(null);
   const hasValidParams = !!token && !!strategyId && !Number.isNaN(strategyId);
 
   useEffect(() => {
     Promise.resolve().then(() => setToken(getToken()));
   }, []);
+
+  // Load symbols for training
+  useEffect(() => {
+    symbolsApi.list().then(setSymbols).catch(() => {});
+  }, []);
+
+  const stopTrainPolling = useCallback(() => {
+    if (trainPollRef.current) {
+      clearInterval(trainPollRef.current);
+      trainPollRef.current = null;
+    }
+  }, []);
+
+  const startTrainPolling = useCallback(
+    (taskId: string) => {
+      stopTrainPolling();
+      setTrainTaskId(taskId);
+      setTrainState("PENDING");
+      setTrainProgressPct(0);
+      setTrainPhase("Queued");
+      setTrainResult(null);
+
+      trainPollRef.current = setInterval(async () => {
+        const t = getToken();
+        if (!t) return;
+        try {
+          const s = await strategiesApi.getSignalTrainStatus(t, taskId);
+          setTrainState(s.state);
+          if (s.progress_pct != null) setTrainProgressPct(s.progress_pct);
+          if (s.phase != null) setTrainPhase(s.phase);
+
+          if (s.state === "SUCCESS" && !s.error) {
+            stopTrainPolling();
+            setTrainProgressPct(100);
+            setTrainPhase("Complete");
+            setTrainResult({ accuracy: s.accuracy, model_id: s.model_id, error: null });
+            setTrainTaskId(null);
+            if (t) {
+              regimesApi.listModels(t).then((r) => setModels(r.models)).catch(() => {});
+            }
+          } else if (s.state === "FAILURE" || s.error) {
+            stopTrainPolling();
+            setTrainProgressPct(null);
+            setTrainPhase(null);
+            setTrainResult({ accuracy: null, model_id: null, error: s.error || "Training failed" });
+            setTrainTaskId(null);
+          }
+        } catch {
+          // transient error, keep polling
+        }
+      }, 3000);
+    },
+    [stopTrainPolling],
+  );
+
+  useEffect(() => {
+    return () => stopTrainPolling();
+  }, [stopTrainPolling]);
 
   // Load strategy
   useEffect(() => {
@@ -548,6 +625,155 @@ export default function StrategyDetailPage() {
                   )}
               </CardContent>
             </Card>
+
+            {/* ---- Signal model training card (ML Signal only) ---- */}
+            {strategy.strategy_type === "ml_signal" && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Train signal model</CardTitle>
+                  <CardDescription>
+                    Train a new ML signal model for this strategy&apos;s symbol and timeframe.
+                    The model predicts probability of upward price movement.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {(() => {
+                    const cfg = (strategy.versions.find((v) => v.is_active) ?? strategy.versions[0])
+                      ?.config as Record<string, unknown> | undefined;
+                    const cfgModelId = cfg?.model_id as number | undefined;
+                    const cfgFeatures = (cfg?.features ?? selectedFeatures) as string[];
+                    const linkedModel = models.find((m) => m.id === cfgModelId);
+                    const symbolName = symbols.find((s) => s.id === linkedModel?.symbol_id)?.symbol;
+
+                    return (
+                      <>
+                        {linkedModel && (
+                          <div className="rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm space-y-1">
+                            <p>
+                              <span className="text-muted-foreground">Linked model:</span>{" "}
+                              <span className="font-medium">#{linkedModel.id} {linkedModel.name}</span>
+                              {linkedModel.accuracy != null && (
+                                <span className="ml-2 text-muted-foreground">
+                                  acc {(linkedModel.accuracy * 100).toFixed(1)}%
+                                </span>
+                              )}
+                            </p>
+                            <p className="text-muted-foreground">
+                              {symbolName ?? `Symbol #${linkedModel.symbol_id}`} · {linkedModel.timeframe}
+                            </p>
+                          </div>
+                        )}
+
+                        <div className="flex flex-wrap items-center gap-3">
+                          <div className="space-y-1.5">
+                            <Label htmlFor="train-horizon">Prediction horizon (bars)</Label>
+                            <Input
+                              id="train-horizon"
+                              type="number"
+                              min={1}
+                              max={50}
+                              value={trainHorizon}
+                              onChange={(e) => setTrainHorizon(e.target.value)}
+                              className="w-28"
+                              disabled={!!trainTaskId}
+                            />
+                          </div>
+                          <label className="flex items-center gap-2 text-sm cursor-pointer mt-6">
+                            <input
+                              type="checkbox"
+                              checked={trainTune}
+                              onChange={(e) => setTrainTune(e.target.checked)}
+                              className="rounded border-input"
+                              disabled={!!trainTaskId}
+                            />
+                            Hyperparameter tuning
+                          </label>
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            disabled={trainSubmitting || !!trainTaskId}
+                            onClick={async () => {
+                              const t = getToken();
+                              if (!t || !linkedModel) return;
+                              setTrainSubmitting(true);
+                              setError(null);
+                              setTrainResult(null);
+                              try {
+                                const res = await strategiesApi.trainSignalModel(t, {
+                                  symbol_id: linkedModel.symbol_id!,
+                                  timeframe: linkedModel.timeframe ?? "1h",
+                                  features: cfgFeatures,
+                                  tune: trainTune,
+                                  horizon: Number(trainHorizon) || 5,
+                                });
+                                startTrainPolling(res.task_id);
+                              } catch (err) {
+                                setError(
+                                  err instanceof Error ? err.message : "Failed to start training.",
+                                );
+                              } finally {
+                                setTrainSubmitting(false);
+                              }
+                            }}
+                          >
+                            {trainSubmitting ? "Starting…" : "Train signal model"}
+                          </Button>
+                          {!linkedModel && (
+                            <p className="text-sm text-muted-foreground self-center">
+                              Select a model in the config above first, or train a regime model from{" "}
+                              <Link href="/market-data" className="underline text-primary">Market data</Link>.
+                            </p>
+                          )}
+                        </div>
+
+                        {trainTaskId && trainState && (
+                          <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-3 space-y-3">
+                            <div className="flex items-center gap-3">
+                              <svg className="h-4 w-4 animate-spin text-blue-500 shrink-0" viewBox="0 0 24 24" fill="none">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                              </svg>
+                              <p className="text-sm text-blue-700 dark:text-blue-400">
+                                {trainPhase ?? "Training in progress…"}
+                              </p>
+                              {trainProgressPct != null && (
+                                <span className="ml-auto text-sm font-medium tabular-nums text-blue-700 dark:text-blue-400">
+                                  {trainProgressPct}%
+                                </span>
+                              )}
+                            </div>
+                            <Progress value={trainProgressPct ?? 0} className="h-2" />
+                          </div>
+                        )}
+
+                        {trainResult && !trainResult.error && (
+                          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
+                            <p className="text-sm text-emerald-700 dark:text-emerald-400">
+                              Training complete!
+                              {trainResult.accuracy != null && (
+                                <span className="ml-2">
+                                  Accuracy: <span className="font-semibold tabular-nums">{(trainResult.accuracy * 100).toFixed(1)}%</span>
+                                </span>
+                              )}
+                              {trainResult.model_id != null && (
+                                <span className="ml-2 text-xs opacity-70">(Model #{trainResult.model_id})</span>
+                              )}
+                            </p>
+                          </div>
+                        )}
+
+                        {trainResult?.error && (
+                          <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3">
+                            <p className="text-sm text-destructive">Training failed: {trainResult.error}</p>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+                </CardContent>
+              </Card>
+            )}
 
             {/* ---- Version history card ---- */}
             <Card>

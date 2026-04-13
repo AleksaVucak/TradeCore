@@ -313,6 +313,28 @@ export const strategiesApi = {
   ) => api.post<StrategyDetail>(`/api/v1/strategies/${id}/versions`, body, token),
   mlFeatures: (token: string) =>
     api.get<string[]>("/api/v1/strategies/ml-features", token),
+  trainSignalModel: (
+    token: string,
+    body: {
+      symbol_id: number;
+      timeframe: string;
+      features: string[];
+      start?: string | null;
+      end?: string | null;
+      tune?: boolean;
+      horizon?: number;
+    }
+  ) => api.post<{ status: string; task_id: string }>("/api/v1/strategies/ml-signal/train", body, token),
+  getSignalTrainStatus: (token: string, taskId: string) =>
+    api.get<{
+      task_id: string;
+      state: string;
+      model_id: number | null;
+      accuracy: number | null;
+      error: string | null;
+      progress_pct: number | null;
+      phase: string | null;
+    }>(`/api/v1/strategies/ml-signal/train/status/${taskId}`, token),
 };
 
 export type IngestResponse = { message: string; task_id: string | null };
