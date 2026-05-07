@@ -29,7 +29,7 @@ from app.schemas.backtest import (
     WalkForwardValidationResponse,
     WalkForwardWindowOut,
 )
-from app.schemas.strategy_config import validate_strategy_config
+from app.schemas.strategy_config import MlSignalConfig, validate_strategy_config
 from app.services.backtest import BacktestCandle, run_walk_forward_validation
 from app.services.backtest.benchmark import compute_benchmark
 from app.services.backtest.monte_carlo import compute_monte_carlo
@@ -256,6 +256,23 @@ def run_walk_forward_backtest(
         strategy_version.strategy.strategy_type,
         strategy_version.config,
     )
+
+    artifact_path: str | None = None
+    if isinstance(validated_config, MlSignalConfig):
+        from app.models.ml_model_metadata import MLModelMetadata
+
+        model_meta = (
+            db.query(MLModelMetadata)
+            .filter(MLModelMetadata.id == validated_config.model_id)
+            .first()
+        )
+        if model_meta is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"ML model {validated_config.model_id} not found",
+            )
+        artifact_path = model_meta.artifact_path
+
     result = run_walk_forward_validation(
         candles,
         validated_config,
@@ -263,6 +280,7 @@ def run_walk_forward_backtest(
         window_bars=body.window_bars,
         step_bars=body.step_bars,
         period_hours=_timeframe_to_hours(body.timeframe),
+        artifact_path=artifact_path,
     )
 
     logger.info(

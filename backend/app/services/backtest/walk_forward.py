@@ -1,12 +1,15 @@
-"""Walk-forward validation helpers (Phase 14.1)."""
+"""Walk-forward validation helpers (Phase 14.1 + 16.3 ML support)."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from statistics import mean
 
-from app.schemas.strategy_config import RsiMaConfig
+from pydantic import BaseModel
+
+from app.schemas.strategy_config import MlSignalConfig, RsiMaConfig
 from app.services.backtest.engine import run_backtest_rsi_ma
+from app.services.backtest.ml_engine import run_backtest_ml_signal
 from app.services.backtest.metrics import compute_metrics_from_result
 from app.services.backtest.types import BacktestCandle
 
@@ -53,14 +56,19 @@ class WalkForwardValidationResult:
 
 def run_walk_forward_validation(
     candles: list[BacktestCandle],
-    config: RsiMaConfig,
+    config: BaseModel,
     *,
     initial_equity: float,
     window_bars: int,
     step_bars: int,
     period_hours: float,
+    artifact_path: str | None = None,
 ) -> WalkForwardValidationResult:
-    """Run the same strategy over multiple rolling candle windows."""
+    """Run the same strategy over multiple rolling candle windows.
+
+    Supports both RSI+MA and ML signal strategies.  For ML signal
+    strategies, *artifact_path* must point to the trained model artifact.
+    """
     if initial_equity <= 0:
         raise ValueError("initial_equity must be positive")
     if window_bars < 2:
@@ -69,17 +77,27 @@ def run_walk_forward_validation(
         raise ValueError("step_bars must be at least 1")
     if len(candles) < window_bars:
         raise ValueError("Not enough candles for the requested window size")
+    if isinstance(config, MlSignalConfig) and artifact_path is None:
+        raise ValueError("artifact_path is required for ml_signal strategies")
 
     windows: list[WalkForwardWindowResult] = []
     start_idx = 0
 
     while start_idx + window_bars <= len(candles):
         window_candles = candles[start_idx : start_idx + window_bars]
-        result = run_backtest_rsi_ma(
-            window_candles,
-            config,
-            initial_equity=initial_equity,
-        )
+        if isinstance(config, MlSignalConfig):
+            result = run_backtest_ml_signal(
+                window_candles,
+                config,
+                artifact_path=artifact_path,  # type: ignore[arg-type]
+                initial_equity=initial_equity,
+            )
+        else:
+            result = run_backtest_rsi_ma(
+                window_candles,
+                config,  # type: ignore[arg-type]
+                initial_equity=initial_equity,
+            )
         metrics = compute_metrics_from_result(result, period_hours=period_hours)
         windows.append(
             WalkForwardWindowResult(

@@ -16,12 +16,13 @@ from app.models.metric_snapshot import MetricSnapshot
 from app.models.strategy import Strategy, StrategyVersion
 from app.models.trade import Trade
 from app.services.backtest.types import BacktestResult
-from app.schemas.strategy_config import validate_strategy_config
+from app.schemas.strategy_config import MlSignalConfig, RsiMaConfig, validate_strategy_config
 from app.services.backtest import (
     BacktestCandle,
     compute_metrics_from_result,
     run_backtest_rsi_ma,
 )
+from app.services.backtest.ml_engine import run_backtest_ml_signal
 
 logger = get_logger(__name__)
 
@@ -183,11 +184,46 @@ def run_backtest_task(
             symbol_id=symbol_id,
             timeframe=timeframe,
             num_candles=len(candles_bt),
+            strategy_type=strategy.strategy_type,
         )
 
-        bt_result = run_backtest_rsi_ma(
-            candles_bt, validated_config, initial_equity=initial_equity
-        )
+        if strategy.strategy_type == "ml_signal":
+            if not isinstance(validated_config, MlSignalConfig):
+                raise ValueError("Validated config type mismatch for ml_signal strategy")
+            from app.models.ml_model_metadata import MLModelMetadata
+
+            model_meta = (
+                db.query(MLModelMetadata)
+                .filter(MLModelMetadata.id == validated_config.model_id)
+                .first()
+            )
+            if model_meta is None:
+                raise ValueError(
+                    f"ML model id {validated_config.model_id} not found"
+                )
+            if model_meta.symbol_id is not None and model_meta.symbol_id != symbol_id:
+                logger.warning(
+                    "ml_model_symbol_mismatch",
+                    model_symbol_id=model_meta.symbol_id,
+                    backtest_symbol_id=symbol_id,
+                    model_id=validated_config.model_id,
+                )
+            bt_result = run_backtest_ml_signal(
+                candles_bt,
+                validated_config,
+                artifact_path=model_meta.artifact_path,
+                initial_equity=initial_equity,
+            )
+        elif strategy.strategy_type == "rsi_ma":
+            if not isinstance(validated_config, RsiMaConfig):
+                raise ValueError("Validated config type mismatch for rsi_ma strategy")
+            bt_result = run_backtest_rsi_ma(
+                candles_bt, validated_config, initial_equity=initial_equity
+            )
+        else:
+            raise ValueError(
+                f"Unsupported strategy type: {strategy.strategy_type}"
+            )
         period_hours = _timeframe_to_hours(timeframe)
         metrics = compute_metrics_from_result(bt_result, period_hours=period_hours)
 

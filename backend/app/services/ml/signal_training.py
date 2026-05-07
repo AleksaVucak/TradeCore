@@ -172,7 +172,7 @@ def _rolling_volatility(closes: Sequence[float], period: int = 20) -> list[float
 _FEATURE_BUILDERS: dict[str, Callable] = {}
 
 
-def _compute_all_catalog_features(
+def compute_all_catalog_features(
     opens: Sequence[float],
     highs: Sequence[float],
     lows: Sequence[float],
@@ -260,7 +260,7 @@ def _build_signal_dataset(
     volumes = [c.volume for c in candles]
     timestamps = [c.timestamp for c in candles]
 
-    all_features = _compute_all_catalog_features(opens, highs, lows, closes, volumes)
+    all_features = compute_all_catalog_features(opens, highs, lows, closes, volumes)
     labels = _generate_binary_labels(closes, horizon)
 
     X: list[list[float]] = []
