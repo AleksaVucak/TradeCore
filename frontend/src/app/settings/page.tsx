@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { authApi, type User } from "@/lib/api/endpoints";
 import { getToken } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
@@ -208,13 +209,14 @@ export default function SettingsPage() {
               </p>
 
               <div className="flex flex-col items-center gap-4 rounded-lg border border-border bg-muted/30 p-6">
-                {/* QR code rendered as an <img> via Google Charts API (no extra deps) */}
-                <img
+                {/* QR code rendered via external QR API */}
+                <Image
                   src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(otpauthUri)}`}
                   alt="Scan this QR code with your authenticator app"
                   width={200}
                   height={200}
                   className="rounded-md"
+                  unoptimized
                 />
                 <div className="flex flex-col items-center gap-1 text-xs text-muted-foreground">
                   <span>Can&apos;t scan? Enter this key manually:</span>
