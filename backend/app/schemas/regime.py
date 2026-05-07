@@ -54,6 +54,7 @@ class ModelInfoOut(BaseModel):
 
     id: int
     name: str
+    model_type: str | None = None
     symbol_id: int | None = None
     timeframe: str | None = None
     training_start: datetime | None = None

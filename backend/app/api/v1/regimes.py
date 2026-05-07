@@ -286,6 +286,7 @@ def _model_to_info(meta: MLModelMetadata) -> ModelInfoOut:
     return ModelInfoOut(
         id=meta.id,
         name=meta.name,
+        model_type=metrics.get("model_type"),
         symbol_id=meta.symbol_id,
         timeframe=meta.timeframe,
         training_start=meta.training_start,
@@ -397,6 +398,7 @@ def get_training_status(
 def list_models(
     symbol_id: int | None = Query(None, description="Filter by symbol ID"),
     timeframe: str | None = Query(None, description="Filter by timeframe"),
+    model_type: str | None = Query(None, description="Filter by model type (e.g. 'signal', 'regime')"),
     _user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
@@ -408,8 +410,10 @@ def list_models(
         q = q.filter(MLModelMetadata.symbol_id == symbol_id)
     if timeframe is not None:
         q = q.filter(MLModelMetadata.timeframe == timeframe)
-    models = q.order_by(MLModelMetadata.created_at.desc()).all()
-    return ModelListResponse(models=[_model_to_info(m) for m in models])
+    rows = q.order_by(MLModelMetadata.created_at.desc()).all()
+    if model_type is not None:
+        rows = [m for m in rows if (m.metrics or {}).get("model_type") == model_type]
+    return ModelListResponse(models=[_model_to_info(m) for m in rows])
 
 
 @router.get("/models/{model_id}", response_model=ModelInfoOut)

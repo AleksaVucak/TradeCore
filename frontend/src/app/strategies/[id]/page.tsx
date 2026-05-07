@@ -112,6 +112,8 @@ const DEFAULT_ML_FEATURES = [
   "rsi_14", "sma_20", "macd", "bbands_width", "atr_14", "log_return_1",
 ];
 
+const TIMEFRAME_OPTIONS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"];
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -131,16 +133,21 @@ export default function StrategyDetailPage() {
 
   // RSI+MA
   const [rsiForm, setRsiForm] = useState<RsiMaConfigForm | null>(null);
-  // ML Signal
+
+  // ML Signal config form
   const [mlForm, setMlForm] = useState<MlSignalConfigForm | null>(null);
   const [selectedFeatures, setSelectedFeatures] = useState<string[]>(DEFAULT_ML_FEATURES);
   const [featureCatalog, setFeatureCatalog] = useState<string[]>([]);
-  const [models, setModels] = useState<ModelInfoOut[]>([]);
+  // Only signal models are valid for backtesting; this list is pre-filtered
+  const [signalModels, setSignalModels] = useState<ModelInfoOut[]>([]);
 
   const [savingConfig, setSavingConfig] = useState(false);
 
   // Signal model training state
   const [symbols, setSymbols] = useState<Symbol[]>([]);
+  // Symbol + timeframe the user wants to train on (independent of config's selected model)
+  const [trainSymbolId, setTrainSymbolId] = useState<string>("");
+  const [trainTimeframe, setTrainTimeframe] = useState<string>("1h");
   const [trainSubmitting, setTrainSubmitting] = useState(false);
   const [trainTune, setTrainTune] = useState(false);
   const [trainHorizon, setTrainHorizon] = useState("5");
@@ -153,6 +160,8 @@ export default function StrategyDetailPage() {
     model_id: number | null;
     error: string | null;
   } | null>(null);
+  // Shows a banner prompting the user to save after auto-selecting a new model
+  const [newModelAutoSelected, setNewModelAutoSelected] = useState(false);
   const trainPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [token, setToken] = useState<string | null>(null);
@@ -162,7 +171,7 @@ export default function StrategyDetailPage() {
     Promise.resolve().then(() => setToken(getToken()));
   }, []);
 
-  // Load symbols for training
+  // Load symbols
   useEffect(() => {
     symbolsApi.list().then(setSymbols).catch(() => {});
   }, []);
@@ -174,6 +183,17 @@ export default function StrategyDetailPage() {
     }
   }, []);
 
+  // Fetches the signal-only model list and updates state
+  const refreshSignalModels = useCallback(
+    (t: string) => {
+      regimesApi
+        .listModels(t, { model_type: "signal" })
+        .then((r) => setSignalModels(r.models))
+        .catch(() => {});
+    },
+    [],
+  );
+
   const startTrainPolling = useCallback(
     (taskId: string) => {
       stopTrainPolling();
@@ -182,12 +202,13 @@ export default function StrategyDetailPage() {
       setTrainProgressPct(0);
       setTrainPhase("Queued");
       setTrainResult(null);
+      setNewModelAutoSelected(false);
 
       trainPollRef.current = setInterval(async () => {
-        const t = getToken();
-        if (!t) return;
+        const tok = getToken();
+        if (!tok) return;
         try {
-          const s = await strategiesApi.getSignalTrainStatus(t, taskId);
+          const s = await strategiesApi.getSignalTrainStatus(tok, taskId);
           setTrainState(s.state);
           if (s.progress_pct != null) setTrainProgressPct(s.progress_pct);
           if (s.phase != null) setTrainPhase(s.phase);
@@ -198,8 +219,21 @@ export default function StrategyDetailPage() {
             setTrainPhase("Complete");
             setTrainResult({ accuracy: s.accuracy, model_id: s.model_id, error: null });
             setTrainTaskId(null);
-            if (t) {
-              regimesApi.listModels(t).then((r) => setModels(r.models)).catch(() => {});
+
+            // Refresh signal model list, then auto-select the newly trained model
+            if (tok) {
+              regimesApi
+                .listModels(tok, { model_type: "signal" })
+                .then((r) => {
+                  setSignalModels(r.models);
+                  if (s.model_id != null) {
+                    setMlForm((prev) =>
+                      prev ? { ...prev, model_id: String(s.model_id) } : prev,
+                    );
+                    setNewModelAutoSelected(true);
+                  }
+                })
+                .catch(() => {});
             }
           } else if (s.state === "FAILURE" || s.error) {
             stopTrainPolling();
@@ -209,7 +243,7 @@ export default function StrategyDetailPage() {
             setTrainTaskId(null);
           }
         } catch {
-          // transient error, keep polling
+          // transient error — keep polling
         }
       }, 3000);
     },
@@ -253,8 +287,23 @@ export default function StrategyDetailPage() {
   useEffect(() => {
     if (!token || !strategy || strategy.strategy_type !== "ml_signal") return;
     strategiesApi.mlFeatures(token).then(setFeatureCatalog).catch(() => {});
-    regimesApi.listModels(token).then((r) => setModels(r.models)).catch(() => {});
-  }, [token, strategy]);
+    refreshSignalModels(token);
+  }, [token, strategy, refreshSignalModels]);
+
+  // Pre-populate training symbol/timeframe from the model saved in config
+  useEffect(() => {
+    if (!mlForm?.model_id || signalModels.length === 0) return;
+    const linked = signalModels.find((m) => m.id === Number(mlForm.model_id));
+    if (!linked) return;
+    if (linked.symbol_id != null && !trainSymbolId) {
+      setTrainSymbolId(String(linked.symbol_id));
+    }
+    if (linked.timeframe && trainTimeframe === "1h") {
+      setTrainTimeframe(linked.timeframe);
+    }
+  // Only run when mlForm.model_id or signalModels first become available
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mlForm?.model_id, signalModels]);
 
   // ---------------------------------------------------------------------------
   // Handlers
@@ -282,6 +331,8 @@ export default function StrategyDetailPage() {
   function handleMlChange(e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) {
     const { name: field, value } = e.target;
     setMlForm((prev) => (prev ? { ...prev, [field]: value } : prev));
+    // Clear auto-select banner if the user manually changes the model
+    if (field === "model_id") setNewModelAutoSelected(false);
   }
 
   function toggleFeature(feat: string) {
@@ -299,7 +350,7 @@ export default function StrategyDetailPage() {
     let configPayload: Record<string, unknown>;
     if (strategy.strategy_type === "ml_signal" && mlForm) {
       if (!mlForm.model_id) {
-        setError("Please select a trained ML model.");
+        setError("Please select a trained signal model.");
         setSavingConfig(false);
         return;
       }
@@ -326,6 +377,7 @@ export default function StrategyDetailPage() {
         if (updated.strategy_type === "ml_signal") {
           setMlForm(mlSignalFormFromConfig(cfg));
           if (Array.isArray(cfg.features)) setSelectedFeatures(cfg.features as string[]);
+          setNewModelAutoSelected(false);
         } else {
           setRsiForm(rsiMaFormFromConfig(cfg));
         }
@@ -366,11 +418,13 @@ export default function StrategyDetailPage() {
           </div>
         )}
       </header>
+
       <main className="container mx-auto max-w-5xl px-6 py-8 space-y-6">
         {!hasValidParams && (
           <p className="text-sm text-destructive">Missing strategy id or not authenticated.</p>
         )}
         {error && hasValidParams && <p className="text-sm text-destructive">{error}</p>}
+
         {!hasValidParams ? (
           <p className="text-sm text-muted-foreground">
             Unable to load a strategy without a valid id and authentication.
@@ -394,11 +448,21 @@ export default function StrategyDetailPage() {
                 <form className="space-y-4" onSubmit={handleMetaSubmit}>
                   <div className="space-y-1.5 max-w-md">
                     <Label htmlFor="meta-name">Name</Label>
-                    <Input id="meta-name" value={metaName} onChange={(e) => setMetaName(e.target.value)} required />
+                    <Input
+                      id="meta-name"
+                      value={metaName}
+                      onChange={(e) => setMetaName(e.target.value)}
+                      required
+                    />
                   </div>
                   <div className="space-y-1.5 max-w-md">
                     <Label htmlFor="meta-description">Description</Label>
-                    <Input id="meta-description" value={metaDescription} onChange={(e) => setMetaDescription(e.target.value)} placeholder="Optional description" />
+                    <Input
+                      id="meta-description"
+                      value={metaDescription}
+                      onChange={(e) => setMetaDescription(e.target.value)}
+                      placeholder="Optional description"
+                    />
                   </div>
                   <div className="space-y-1.5">
                     <Label>Type</Label>
@@ -431,15 +495,39 @@ export default function StrategyDetailPage() {
                       <div className="grid gap-3 md:grid-cols-3">
                         <div className="space-y-1.5">
                           <Label htmlFor="rsi_period">RSI period</Label>
-                          <Input id="rsi_period" name="rsi_period" type="number" min={2} max={100} value={rsiForm.rsi_period} onChange={handleRsiChange} />
+                          <Input
+                            id="rsi_period"
+                            name="rsi_period"
+                            type="number"
+                            min={2}
+                            max={100}
+                            value={rsiForm.rsi_period}
+                            onChange={handleRsiChange}
+                          />
                         </div>
                         <div className="space-y-1.5">
                           <Label htmlFor="rsi_buy_threshold">Buy threshold</Label>
-                          <Input id="rsi_buy_threshold" name="rsi_buy_threshold" type="number" min={0} max={100} value={rsiForm.rsi_buy_threshold} onChange={handleRsiChange} />
+                          <Input
+                            id="rsi_buy_threshold"
+                            name="rsi_buy_threshold"
+                            type="number"
+                            min={0}
+                            max={100}
+                            value={rsiForm.rsi_buy_threshold}
+                            onChange={handleRsiChange}
+                          />
                         </div>
                         <div className="space-y-1.5">
                           <Label htmlFor="rsi_sell_threshold">Sell threshold</Label>
-                          <Input id="rsi_sell_threshold" name="rsi_sell_threshold" type="number" min={0} max={100} value={rsiForm.rsi_sell_threshold} onChange={handleRsiChange} />
+                          <Input
+                            id="rsi_sell_threshold"
+                            name="rsi_sell_threshold"
+                            type="number"
+                            min={0}
+                            max={100}
+                            value={rsiForm.rsi_sell_threshold}
+                            onChange={handleRsiChange}
+                          />
                         </div>
                       </div>
                     </div>
@@ -448,7 +536,15 @@ export default function StrategyDetailPage() {
                       <h2 className="text-sm font-semibold text-muted-foreground">Trend filter</h2>
                       <div className="space-y-1.5 max-w-xs">
                         <Label htmlFor="ma_period">MA period</Label>
-                        <Input id="ma_period" name="ma_period" type="number" min={1} max={500} value={rsiForm.ma_period} onChange={handleRsiChange} />
+                        <Input
+                          id="ma_period"
+                          name="ma_period"
+                          type="number"
+                          min={1}
+                          max={500}
+                          value={rsiForm.ma_period}
+                          onChange={handleRsiChange}
+                        />
                       </div>
                     </div>
 
@@ -457,16 +553,45 @@ export default function StrategyDetailPage() {
                       <div className="grid gap-3 md:grid-cols-3">
                         <div className="space-y-1.5">
                           <Label htmlFor="position_size_pct">Position size (%)</Label>
-                          <Input id="position_size_pct" name="position_size_pct" type="number" min={0.01} max={100} step={0.01} value={rsiForm.position_size_pct} onChange={handleRsiChange} />
-                          <p className="text-xs text-muted-foreground">Enter `100` to use the full account balance per trade.</p>
+                          <Input
+                            id="position_size_pct"
+                            name="position_size_pct"
+                            type="number"
+                            min={0.01}
+                            max={100}
+                            step={0.01}
+                            value={rsiForm.position_size_pct}
+                            onChange={handleRsiChange}
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Enter 100 to use the full account balance per trade.
+                          </p>
                         </div>
                         <div className="space-y-1.5">
                           <Label htmlFor="stop_loss_pct">Stop loss (%)</Label>
-                          <Input id="stop_loss_pct" name="stop_loss_pct" type="number" min={0} max={100} step={0.1} value={rsiForm.stop_loss_pct} onChange={handleRsiChange} />
+                          <Input
+                            id="stop_loss_pct"
+                            name="stop_loss_pct"
+                            type="number"
+                            min={0}
+                            max={100}
+                            step={0.1}
+                            value={rsiForm.stop_loss_pct}
+                            onChange={handleRsiChange}
+                          />
                         </div>
                         <div className="space-y-1.5">
                           <Label htmlFor="take_profit_pct">Take profit (%)</Label>
-                          <Input id="take_profit_pct" name="take_profit_pct" type="number" min={0} max={100} step={0.1} value={rsiForm.take_profit_pct} onChange={handleRsiChange} />
+                          <Input
+                            id="take_profit_pct"
+                            name="take_profit_pct"
+                            type="number"
+                            min={0}
+                            max={100}
+                            step={0.1}
+                            value={rsiForm.take_profit_pct}
+                            onChange={handleRsiChange}
+                          />
                         </div>
                       </div>
                     </div>
@@ -476,11 +601,29 @@ export default function StrategyDetailPage() {
                       <div className="grid gap-3 md:grid-cols-2">
                         <div className="space-y-1.5">
                           <Label htmlFor="fee_rate">Fee rate (fraction)</Label>
-                          <Input id="fee_rate" name="fee_rate" type="number" min={0} max={1} step={0.0001} value={rsiForm.fee_rate} onChange={handleRsiChange} />
+                          <Input
+                            id="fee_rate"
+                            name="fee_rate"
+                            type="number"
+                            min={0}
+                            max={1}
+                            step={0.0001}
+                            value={rsiForm.fee_rate}
+                            onChange={handleRsiChange}
+                          />
                         </div>
                         <div className="space-y-1.5">
                           <Label htmlFor="slippage_rate">Slippage rate (fraction)</Label>
-                          <Input id="slippage_rate" name="slippage_rate" type="number" min={0} max={1} step={0.0001} value={rsiForm.slippage_rate} onChange={handleRsiChange} />
+                          <Input
+                            id="slippage_rate"
+                            name="slippage_rate"
+                            type="number"
+                            min={0}
+                            max={1}
+                            step={0.0001}
+                            value={rsiForm.slippage_rate}
+                            onChange={handleRsiChange}
+                          />
                         </div>
                       </div>
                     </div>
@@ -496,11 +639,21 @@ export default function StrategyDetailPage() {
                 {/* ML Signal config editor */}
                 {strategy.strategy_type === "ml_signal" && mlForm && (
                   <form className="space-y-6" onSubmit={handleConfigSubmit}>
-                    {/* Model picker */}
+                    {/* Auto-select banner */}
+                    {newModelAutoSelected && (
+                      <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-3">
+                        <p className="text-sm text-blue-700 dark:text-blue-400">
+                          New model trained and auto-selected below. Click &quot;Save as new version&quot; to
+                          use it in backtests.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Model picker — signal models only */}
                     <div className="space-y-3">
                       <h2 className="text-sm font-semibold text-muted-foreground">Model</h2>
                       <div className="space-y-1.5 max-w-md">
-                        <Label htmlFor="model_id">Trained model</Label>
+                        <Label htmlFor="model_id">Trained signal model</Label>
                         <select
                           id="model_id"
                           name="model_id"
@@ -508,19 +661,25 @@ export default function StrategyDetailPage() {
                           onChange={handleMlChange}
                           className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                         >
-                          <option value="">Select a model…</option>
-                          {models.map((m) => (
+                          <option value="">Select a signal model…</option>
+                          {signalModels.map((m) => (
                             <option key={m.id} value={m.id}>
-                              {m.name} — acc{" "}
+                              #{m.id} {m.name} — acc{" "}
                               {m.accuracy != null ? `${(m.accuracy * 100).toFixed(1)}%` : "n/a"}{" "}
-                              ({m.timeframe ?? "?"})
+                              ({m.timeframe ?? "?"}) ·{" "}
+                              {symbols.find((s) => s.id === m.symbol_id)?.symbol ?? `sym#${m.symbol_id}`}
                             </option>
                           ))}
                         </select>
-                        {models.length === 0 && (
+                        {signalModels.length === 0 ? (
                           <p className="text-xs text-muted-foreground">
-                            No trained models found. Train one from the{" "}
-                            <Link href="/market-data" className="underline text-primary">Market data</Link> page first.
+                            No trained signal models found. Use the &quot;Train signal model&quot; card
+                            below to train one first.
+                          </p>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">
+                            Only signal models are shown. The model&apos;s features must match the
+                            feature selection below.
                           </p>
                         )}
                       </div>
@@ -530,7 +689,8 @@ export default function StrategyDetailPage() {
                     <div className="space-y-3">
                       <h2 className="text-sm font-semibold text-muted-foreground">Features</h2>
                       <p className="text-xs text-muted-foreground">
-                        Select the features your model was trained on. These must match the training feature set.
+                        Select the features your model was trained on. These must exactly match the
+                        feature set used during training.
                       </p>
                       <div className="flex flex-wrap gap-2">
                         {(featureCatalog.length > 0 ? featureCatalog : DEFAULT_ML_FEATURES).map((feat) => {
@@ -562,12 +722,30 @@ export default function StrategyDetailPage() {
                       <div className="grid gap-3 md:grid-cols-2">
                         <div className="space-y-1.5">
                           <Label htmlFor="long_threshold">Long threshold</Label>
-                          <Input id="long_threshold" name="long_threshold" type="number" min={0} max={1} step={0.01} value={mlForm.long_threshold} onChange={handleMlChange} />
+                          <Input
+                            id="long_threshold"
+                            name="long_threshold"
+                            type="number"
+                            min={0}
+                            max={1}
+                            step={0.01}
+                            value={mlForm.long_threshold}
+                            onChange={handleMlChange}
+                          />
                           <p className="text-xs text-muted-foreground">Enter long when P(up) &ge; this value</p>
                         </div>
                         <div className="space-y-1.5">
                           <Label htmlFor="exit_threshold">Exit threshold</Label>
-                          <Input id="exit_threshold" name="exit_threshold" type="number" min={0} max={1} step={0.01} value={mlForm.exit_threshold} onChange={handleMlChange} />
+                          <Input
+                            id="exit_threshold"
+                            name="exit_threshold"
+                            type="number"
+                            min={0}
+                            max={1}
+                            step={0.01}
+                            value={mlForm.exit_threshold}
+                            onChange={handleMlChange}
+                          />
                           <p className="text-xs text-muted-foreground">Exit position when P(up) &le; this value</p>
                         </div>
                       </div>
@@ -579,16 +757,45 @@ export default function StrategyDetailPage() {
                       <div className="grid gap-3 md:grid-cols-3">
                         <div className="space-y-1.5">
                           <Label htmlFor="ml_position_size_pct">Position size (%)</Label>
-                          <Input id="ml_position_size_pct" name="position_size_pct" type="number" min={0.01} max={100} step={0.01} value={mlForm.position_size_pct} onChange={handleMlChange} />
-                          <p className="text-xs text-muted-foreground">Enter `100` to use the full account balance per trade.</p>
+                          <Input
+                            id="ml_position_size_pct"
+                            name="position_size_pct"
+                            type="number"
+                            min={0.01}
+                            max={100}
+                            step={0.01}
+                            value={mlForm.position_size_pct}
+                            onChange={handleMlChange}
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Enter 100 to use the full account balance per trade.
+                          </p>
                         </div>
                         <div className="space-y-1.5">
                           <Label htmlFor="ml_stop_loss_pct">Stop loss (%)</Label>
-                          <Input id="ml_stop_loss_pct" name="stop_loss_pct" type="number" min={0} max={100} step={0.1} value={mlForm.stop_loss_pct} onChange={handleMlChange} />
+                          <Input
+                            id="ml_stop_loss_pct"
+                            name="stop_loss_pct"
+                            type="number"
+                            min={0}
+                            max={100}
+                            step={0.1}
+                            value={mlForm.stop_loss_pct}
+                            onChange={handleMlChange}
+                          />
                         </div>
                         <div className="space-y-1.5">
                           <Label htmlFor="ml_take_profit_pct">Take profit (%)</Label>
-                          <Input id="ml_take_profit_pct" name="take_profit_pct" type="number" min={0} max={100} step={0.1} value={mlForm.take_profit_pct} onChange={handleMlChange} />
+                          <Input
+                            id="ml_take_profit_pct"
+                            name="take_profit_pct"
+                            type="number"
+                            min={0}
+                            max={100}
+                            step={0.1}
+                            value={mlForm.take_profit_pct}
+                            onChange={handleMlChange}
+                          />
                         </div>
                       </div>
                     </div>
@@ -599,11 +806,29 @@ export default function StrategyDetailPage() {
                       <div className="grid gap-3 md:grid-cols-2">
                         <div className="space-y-1.5">
                           <Label htmlFor="ml_fee_rate">Fee rate (fraction)</Label>
-                          <Input id="ml_fee_rate" name="fee_rate" type="number" min={0} max={1} step={0.0001} value={mlForm.fee_rate} onChange={handleMlChange} />
+                          <Input
+                            id="ml_fee_rate"
+                            name="fee_rate"
+                            type="number"
+                            min={0}
+                            max={1}
+                            step={0.0001}
+                            value={mlForm.fee_rate}
+                            onChange={handleMlChange}
+                          />
                         </div>
                         <div className="space-y-1.5">
                           <Label htmlFor="ml_slippage_rate">Slippage rate (fraction)</Label>
-                          <Input id="ml_slippage_rate" name="slippage_rate" type="number" min={0} max={1} step={0.0001} value={mlForm.slippage_rate} onChange={handleMlChange} />
+                          <Input
+                            id="ml_slippage_rate"
+                            name="slippage_rate"
+                            type="number"
+                            min={0}
+                            max={1}
+                            step={0.0001}
+                            value={mlForm.slippage_rate}
+                            onChange={handleMlChange}
+                          />
                         </div>
                       </div>
                     </div>
@@ -617,12 +842,11 @@ export default function StrategyDetailPage() {
                 )}
 
                 {/* Unsupported type fallback */}
-                {strategy.strategy_type !== "rsi_ma" &&
-                  strategy.strategy_type !== "ml_signal" && (
-                    <p className="text-sm text-muted-foreground">
-                      Editing is not yet supported for &quot;{strategy.strategy_type}&quot; strategies.
-                    </p>
-                  )}
+                {strategy.strategy_type !== "rsi_ma" && strategy.strategy_type !== "ml_signal" && (
+                  <p className="text-sm text-muted-foreground">
+                    Editing is not yet supported for &quot;{strategy.strategy_type}&quot; strategies.
+                  </p>
+                )}
               </CardContent>
             </Card>
 
@@ -632,145 +856,210 @@ export default function StrategyDetailPage() {
                 <CardHeader>
                   <CardTitle>Train signal model</CardTitle>
                   <CardDescription>
-                    Train a new ML signal model for this strategy&apos;s symbol and timeframe.
-                    The model predicts probability of upward price movement.
+                    Train a new ML signal model on historical OHLCV data. After training completes, the
+                    new model will be automatically selected in the config above — just save as a new
+                    version to start using it.
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-4">
-                  {(() => {
-                    const cfg = (strategy.versions.find((v) => v.is_active) ?? strategy.versions[0])
-                      ?.config as Record<string, unknown> | undefined;
-                    const cfgModelId = cfg?.model_id as number | undefined;
-                    const cfgFeatures = (cfg?.features ?? selectedFeatures) as string[];
-                    const linkedModel = models.find((m) => m.id === cfgModelId);
-                    const symbolName = symbols.find((s) => s.id === linkedModel?.symbol_id)?.symbol;
+                <CardContent className="space-y-5">
+                  {/* Training target: symbol + timeframe */}
+                  <div className="space-y-3">
+                    <h3 className="text-sm font-semibold text-muted-foreground">Training data</h3>
+                    <div className="flex flex-wrap gap-3">
+                      <div className="space-y-1.5 min-w-[180px]">
+                        <Label htmlFor="train-symbol">Symbol</Label>
+                        <select
+                          id="train-symbol"
+                          value={trainSymbolId}
+                          onChange={(e) => setTrainSymbolId(e.target.value)}
+                          disabled={!!trainTaskId}
+                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
+                        >
+                          <option value="">Select symbol…</option>
+                          {symbols.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.symbol}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
 
-                    return (
-                      <>
-                        {linkedModel && (
-                          <div className="rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm space-y-1">
-                            <p>
-                              <span className="text-muted-foreground">Linked model:</span>{" "}
-                              <span className="font-medium">#{linkedModel.id} {linkedModel.name}</span>
-                              {linkedModel.accuracy != null && (
-                                <span className="ml-2 text-muted-foreground">
-                                  acc {(linkedModel.accuracy * 100).toFixed(1)}%
-                                </span>
-                              )}
-                            </p>
-                            <p className="text-muted-foreground">
-                              {symbolName ?? `Symbol #${linkedModel.symbol_id}`} · {linkedModel.timeframe}
-                            </p>
-                          </div>
-                        )}
+                      <div className="space-y-1.5 min-w-[120px]">
+                        <Label htmlFor="train-timeframe">Timeframe</Label>
+                        <select
+                          id="train-timeframe"
+                          value={trainTimeframe}
+                          onChange={(e) => setTrainTimeframe(e.target.value)}
+                          disabled={!!trainTaskId}
+                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
+                        >
+                          {TIMEFRAME_OPTIONS.map((tf) => (
+                            <option key={tf} value={tf}>
+                              {tf}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
 
-                        <div className="flex flex-wrap items-center gap-3">
-                          <div className="space-y-1.5">
-                            <Label htmlFor="train-horizon">Prediction horizon (bars)</Label>
-                            <Input
-                              id="train-horizon"
-                              type="number"
-                              min={1}
-                              max={50}
-                              value={trainHorizon}
-                              onChange={(e) => setTrainHorizon(e.target.value)}
-                              className="w-28"
-                              disabled={!!trainTaskId}
-                            />
-                          </div>
-                          <label className="flex items-center gap-2 text-sm cursor-pointer mt-6">
-                            <input
-                              type="checkbox"
-                              checked={trainTune}
-                              onChange={(e) => setTrainTune(e.target.checked)}
-                              className="rounded border-input"
-                              disabled={!!trainTaskId}
-                            />
-                            Hyperparameter tuning
-                          </label>
-                        </div>
+                      <div className="space-y-1.5 min-w-[120px]">
+                        <Label htmlFor="train-horizon">Prediction horizon (bars)</Label>
+                        <Input
+                          id="train-horizon"
+                          type="number"
+                          min={1}
+                          max={50}
+                          value={trainHorizon}
+                          onChange={(e) => setTrainHorizon(e.target.value)}
+                          className="w-28"
+                          disabled={!!trainTaskId}
+                        />
+                      </div>
 
-                        <div className="flex flex-wrap gap-2">
-                          <Button
-                            disabled={trainSubmitting || !!trainTaskId}
-                            onClick={async () => {
-                              const t = getToken();
-                              if (!t || !linkedModel) return;
-                              setTrainSubmitting(true);
-                              setError(null);
-                              setTrainResult(null);
-                              try {
-                                const res = await strategiesApi.trainSignalModel(t, {
-                                  symbol_id: linkedModel.symbol_id!,
-                                  timeframe: linkedModel.timeframe ?? "1h",
-                                  features: cfgFeatures,
-                                  tune: trainTune,
-                                  horizon: Number(trainHorizon) || 5,
-                                });
-                                startTrainPolling(res.task_id);
-                              } catch (err) {
-                                setError(
-                                  err instanceof Error ? err.message : "Failed to start training.",
-                                );
-                              } finally {
-                                setTrainSubmitting(false);
-                              }
-                            }}
+                      <label className="flex items-center gap-2 text-sm cursor-pointer self-end pb-1">
+                        <input
+                          type="checkbox"
+                          checked={trainTune}
+                          onChange={(e) => setTrainTune(e.target.checked)}
+                          className="rounded border-input"
+                          disabled={!!trainTaskId}
+                        />
+                        Hyperparameter tuning
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Features used for training */}
+                  <div className="space-y-2">
+                    <h3 className="text-sm font-semibold text-muted-foreground">Features to train on</h3>
+                    <p className="text-xs text-muted-foreground">
+                      Matches the feature selection in the config above. Adjust features there, then train.
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {selectedFeatures.length > 0 ? (
+                        selectedFeatures.map((f) => (
+                          <span
+                            key={f}
+                            className="rounded-full border border-primary/40 bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary"
                           >
-                            {trainSubmitting ? "Starting…" : "Train signal model"}
-                          </Button>
-                          {!linkedModel && (
-                            <p className="text-sm text-muted-foreground self-center">
-                              Select a model in the config above first, or train a regime model from{" "}
-                              <Link href="/market-data" className="underline text-primary">Market data</Link>.
-                            </p>
-                          )}
-                        </div>
+                            {f}
+                          </span>
+                        ))
+                      ) : (
+                        <p className="text-xs text-muted-foreground italic">
+                          No features selected in config above.
+                        </p>
+                      )}
+                    </div>
+                  </div>
 
-                        {trainTaskId && trainState && (
-                          <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-3 space-y-3">
-                            <div className="flex items-center gap-3">
-                              <svg className="h-4 w-4 animate-spin text-blue-500 shrink-0" viewBox="0 0 24 24" fill="none">
-                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                              </svg>
-                              <p className="text-sm text-blue-700 dark:text-blue-400">
-                                {trainPhase ?? "Training in progress…"}
-                              </p>
-                              {trainProgressPct != null && (
-                                <span className="ml-auto text-sm font-medium tabular-nums text-blue-700 dark:text-blue-400">
-                                  {trainProgressPct}%
-                                </span>
-                              )}
-                            </div>
-                            <Progress value={trainProgressPct ?? 0} className="h-2" />
-                          </div>
-                        )}
+                  {/* Train button */}
+                  <div>
+                    <Button
+                      disabled={trainSubmitting || !!trainTaskId || !trainSymbolId || selectedFeatures.length === 0}
+                      onClick={async () => {
+                        const t = getToken();
+                        if (!t || !trainSymbolId) return;
+                        setTrainSubmitting(true);
+                        setError(null);
+                        setTrainResult(null);
+                        try {
+                          const res = await strategiesApi.trainSignalModel(t, {
+                            symbol_id: Number(trainSymbolId),
+                            timeframe: trainTimeframe,
+                            features: selectedFeatures,
+                            tune: trainTune,
+                            horizon: Number(trainHorizon) || 5,
+                          });
+                          startTrainPolling(res.task_id);
+                        } catch (err) {
+                          setError(
+                            err instanceof Error ? err.message : "Failed to start training.",
+                          );
+                        } finally {
+                          setTrainSubmitting(false);
+                        }
+                      }}
+                    >
+                      {trainSubmitting ? "Starting…" : "Train signal model"}
+                    </Button>
+                    {!trainSymbolId && (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Select a symbol above to enable training.
+                      </p>
+                    )}
+                    {selectedFeatures.length === 0 && (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Select at least one feature in the config above to enable training.
+                      </p>
+                    )}
+                  </div>
 
-                        {trainResult && !trainResult.error && (
-                          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
-                            <p className="text-sm text-emerald-700 dark:text-emerald-400">
-                              Training complete!
-                              {trainResult.accuracy != null && (
-                                <span className="ml-2">
-                                  Accuracy: <span className="font-semibold tabular-nums">{(trainResult.accuracy * 100).toFixed(1)}%</span>
-                                </span>
-                              )}
-                              {trainResult.model_id != null && (
-                                <span className="ml-2 text-xs opacity-70">(Model #{trainResult.model_id})</span>
-                              )}
-                            </p>
-                          </div>
+                  {/* Progress indicator */}
+                  {trainTaskId && trainState && (
+                    <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-3 space-y-3">
+                      <div className="flex items-center gap-3">
+                        <svg
+                          className="h-4 w-4 animate-spin text-blue-500 shrink-0"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                        >
+                          <circle
+                            className="opacity-25"
+                            cx="12"
+                            cy="12"
+                            r="10"
+                            stroke="currentColor"
+                            strokeWidth="4"
+                          />
+                          <path
+                            className="opacity-75"
+                            fill="currentColor"
+                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                          />
+                        </svg>
+                        <p className="text-sm text-blue-700 dark:text-blue-400">
+                          {trainPhase ?? "Training in progress…"}
+                        </p>
+                        {trainProgressPct != null && (
+                          <span className="ml-auto text-sm font-medium tabular-nums text-blue-700 dark:text-blue-400">
+                            {trainProgressPct}%
+                          </span>
                         )}
+                      </div>
+                      <Progress value={trainProgressPct ?? 0} className="h-2" />
+                    </div>
+                  )}
 
-                        {trainResult?.error && (
-                          <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3">
-                            <p className="text-sm text-destructive">Training failed: {trainResult.error}</p>
-                          </div>
+                  {/* Success */}
+                  {trainResult && !trainResult.error && (
+                    <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 space-y-1">
+                      <p className="text-sm text-emerald-700 dark:text-emerald-400 font-medium">
+                        Training complete!
+                        {trainResult.accuracy != null && (
+                          <span className="ml-2">
+                            Accuracy:{" "}
+                            <span className="font-semibold tabular-nums">
+                              {(trainResult.accuracy * 100).toFixed(1)}%
+                            </span>
+                          </span>
                         )}
-                      </>
-                    );
-                  })()}
+                        {trainResult.model_id != null && (
+                          <span className="ml-2 text-xs opacity-70">(Model #{trainResult.model_id})</span>
+                        )}
+                      </p>
+                      <p className="text-xs text-emerald-700/80 dark:text-emerald-400/80">
+                        The new model has been auto-selected in the config above. Click &quot;Save as new
+                        version&quot; to use it in backtests.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Failure */}
+                  {trainResult?.error && (
+                    <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3">
+                      <p className="text-sm text-destructive">Training failed: {trainResult.error}</p>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             )}

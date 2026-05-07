@@ -114,11 +114,11 @@ export default function NewStrategyPage() {
     Promise.resolve().then(() => setToken(getToken()));
   }, []);
 
-  // Fetch ML feature catalog + trained models when the ML tab is active
+  // Fetch ML feature catalog + signal-only trained models when the ML tab is active
   useEffect(() => {
     if (strategyType !== "ml_signal" || !token) return;
     strategiesApi.mlFeatures(token).then(setFeatureCatalog).catch(() => {});
-    regimesApi.listModels(token).then((r) => setModels(r.models)).catch(() => {});
+    regimesApi.listModels(token, { model_type: "signal" }).then((r) => setModels(r.models)).catch(() => {});
   }, [strategyType, token]);
 
   function handleRsiChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -364,11 +364,11 @@ export default function NewStrategyPage() {
               {/* ---------- ML Signal config ---------- */}
               {strategyType === "ml_signal" && (
                 <>
-                  {/* Model picker */}
+                  {/* Model picker — signal models only */}
                   <div className="space-y-3">
                     <h2 className="text-sm font-semibold text-muted-foreground">Model</h2>
                     <div className="space-y-1.5 max-w-md">
-                      <Label htmlFor="model_id">Trained model</Label>
+                      <Label htmlFor="model_id">Trained signal model</Label>
                       <select
                         id="model_id"
                         name="model_id"
@@ -376,21 +376,29 @@ export default function NewStrategyPage() {
                         onChange={handleMlChange}
                         className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                       >
-                        <option value="">Select a model…</option>
+                        <option value="">Select a signal model…</option>
                         {models.map((m) => (
                           <option key={m.id} value={m.id}>
-                            {m.name} — acc {m.accuracy != null ? `${(m.accuracy * 100).toFixed(1)}%` : "n/a"}{" "}
+                            #{m.id} {m.name} — acc{" "}
+                            {m.accuracy != null ? `${(m.accuracy * 100).toFixed(1)}%` : "n/a"}{" "}
                             ({m.timeframe ?? "?"})
                           </option>
                         ))}
                       </select>
-                      {models.length === 0 && (
+                      {models.length === 0 ? (
                         <p className="text-xs text-muted-foreground">
-                          No trained models found. Train one from the{" "}
+                          No trained signal models found. Create an ML Signal strategy first, then
+                          use the &quot;Train signal model&quot; card on the strategy detail page to
+                          train one. You can also train from the{" "}
                           <Link href="/market-data" className="underline text-primary">
                             Market data
                           </Link>{" "}
-                          page first.
+                          page.
+                        </p>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">
+                          Only signal models are shown. Features selected below must match the
+                          model&apos;s training features exactly.
                         </p>
                       )}
                     </div>

@@ -428,6 +428,7 @@ export type RegimePerformanceResponse = {
 export type ModelInfoOut = {
   id: number;
   name: string;
+  model_type: string | null;
   symbol_id: number | null;
   timeframe: string | null;
   training_start: string | null;
@@ -501,10 +502,11 @@ export const regimesApi = {
     api.get<RegimePerformanceResponse>(`/api/v1/regimes/run/${runId}/performance`, token),
   getModelForRun: (token: string, runId: string) =>
     api.get<ModelInfoOut>(`/api/v1/regimes/run/${runId}/model`, token),
-  listModels: (token: string, params?: { symbol_id?: number; timeframe?: string }) => {
+  listModels: (token: string, params?: { symbol_id?: number; timeframe?: string; model_type?: string }) => {
     const search = new URLSearchParams();
     if (params?.symbol_id != null) search.set("symbol_id", String(params.symbol_id));
     if (params?.timeframe) search.set("timeframe", params.timeframe);
+    if (params?.model_type) search.set("model_type", params.model_type);
     const qs = search.toString();
     return api.get<ModelListResponse>(`/api/v1/regimes/models${qs ? `?${qs}` : ""}`, token);
   },
