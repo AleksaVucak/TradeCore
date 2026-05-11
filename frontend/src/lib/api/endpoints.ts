@@ -512,6 +512,79 @@ export const regimesApi = {
   },
 };
 
+export type SentimentScoreOut = {
+  id: number;
+  symbol_id: number;
+  source: string;
+  headline: string;
+  url: string | null;
+  published_at: string;
+  score: number;
+  label: string;
+  created_at: string;
+};
+
+export type SentimentSymbolResponse = {
+  symbol: string;
+  symbol_id: number;
+  count: number;
+  scores: SentimentScoreOut[];
+};
+
+export type SentimentAggregateOut = {
+  symbol: string;
+  symbol_id: number;
+  total: number;
+  avg_score: number;
+  positive_count: number;
+  negative_count: number;
+  neutral_count: number;
+  overall_label: string;
+};
+
+export type SentimentRefreshResponse = {
+  status: string;
+  task_id: string;
+};
+
+export const sentimentApi = {
+  getForSymbol: (
+    token: string,
+    symbol: string,
+    params?: { limit?: number; start?: string; end?: string; label?: string }
+  ) => {
+    const search = new URLSearchParams();
+    if (params?.limit != null) search.set("limit", String(params.limit));
+    if (params?.start) search.set("start", params.start);
+    if (params?.end) search.set("end", params.end);
+    if (params?.label) search.set("label", params.label);
+    const qs = search.toString();
+    return api.get<SentimentSymbolResponse>(
+      `/api/v1/sentiment/${symbol}${qs ? `?${qs}` : ""}`,
+      token
+    );
+  },
+  getAggregate: (
+    token: string,
+    symbol: string,
+    params?: { start?: string; end?: string }
+  ) => {
+    const search = new URLSearchParams();
+    if (params?.start) search.set("start", params.start);
+    if (params?.end) search.set("end", params.end);
+    const qs = search.toString();
+    return api.get<SentimentAggregateOut>(
+      `/api/v1/sentiment/${symbol}/aggregate${qs ? `?${qs}` : ""}`,
+      token
+    );
+  },
+  refresh: (
+    token: string,
+    body: { symbol_id: number; lookback_days?: number }
+  ) =>
+    api.post<SentimentRefreshResponse>("/api/v1/sentiment/refresh", body, token),
+};
+
 export const marketDataApi = {
   ingest: (
     token: string,

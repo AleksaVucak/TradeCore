@@ -1,4 +1,4 @@
-"""Pydantic schemas for sentiment scores (Phase 17.1)."""
+"""Pydantic schemas for sentiment scores (Phase 17.1 + 17.2)."""
 
 from datetime import datetime
 
@@ -20,6 +20,28 @@ class SentimentScoreOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class SentimentSymbolResponse(BaseModel):
+    """Paginated list of sentiment scores for a symbol (Phase 17.2)."""
+
+    symbol: str
+    symbol_id: int
+    count: int
+    scores: list[SentimentScoreOut]
+
+
+class SentimentAggregateOut(BaseModel):
+    """Aggregated sentiment statistics for a symbol (Phase 17.2)."""
+
+    symbol: str
+    symbol_id: int
+    total: int
+    avg_score: float
+    positive_count: int
+    negative_count: int
+    neutral_count: int
+    overall_label: str
 
 
 class SentimentRefreshRequest(BaseModel):

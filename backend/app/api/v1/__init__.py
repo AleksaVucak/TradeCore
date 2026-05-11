@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1 import auth, backtests, market_data, regimes, strategies, symbols
+from app.api.v1 import auth, backtests, market_data, regimes, sentiment, strategies, symbols
 
 api_router = APIRouter(prefix="/api/v1", tags=["api"])
 
@@ -10,3 +10,4 @@ api_router.include_router(backtests.router, prefix="/backtests", tags=["backtest
 api_router.include_router(strategies.router, prefix="/strategies", tags=["strategies"])
 api_router.include_router(market_data.router, prefix="/market-data", tags=["market-data"])
 api_router.include_router(regimes.router, prefix="/regimes", tags=["regimes"])
+api_router.include_router(sentiment.router, prefix="/sentiment", tags=["sentiment"])
