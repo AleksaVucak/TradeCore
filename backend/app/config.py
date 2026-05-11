@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     # Frontend URL used for building verification links
     frontend_url: str = "http://localhost:3000"
 
+    # NewsAPI key for sentiment pipeline (Phase 17.1)
+    newsapi_key: str = ""
+
     # Verification-token lifetime in minutes
     verification_token_expire_minutes: int = 60
 

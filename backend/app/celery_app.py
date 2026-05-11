@@ -7,7 +7,13 @@ celery_app = Celery(
     "tradecore",
     broker=settings.celery_broker_url,
     backend=settings.redis_url,
-    include=["app.tasks", "app.tasks.market_data", "app.tasks.regimes", "app.tasks.signal_model"],
+    include=[
+        "app.tasks",
+        "app.tasks.market_data",
+        "app.tasks.regimes",
+        "app.tasks.signal_model",
+        "app.tasks.sentiment",
+    ],
 )
 
 celery_app.conf.update(
@@ -16,6 +22,12 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
+    beat_schedule={
+        "refresh-sentiment-every-6h": {
+            "task": "app.tasks.sentiment.refresh_all_sentiment_task",
+            "schedule": 6 * 60 * 60,
+        },
+    },
 )
 
 
