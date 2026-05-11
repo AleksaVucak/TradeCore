@@ -1,9 +1,10 @@
-"""Walk-forward validation helpers (Phase 14.1 + 16.3 ML support)."""
+"""Walk-forward validation helpers (Phase 14.1 + 16.3 ML support + 17.3 sentiment)."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from statistics import mean
+from typing import Sequence
 
 from pydantic import BaseModel
 
@@ -12,6 +13,7 @@ from app.services.backtest.engine import run_backtest_rsi_ma
 from app.services.backtest.ml_engine import run_backtest_ml_signal
 from app.services.backtest.metrics import compute_metrics_from_result
 from app.services.backtest.types import BacktestCandle
+from app.services.sentiment.filter import SentimentSample
 
 
 @dataclass(frozen=True)
@@ -63,11 +65,16 @@ def run_walk_forward_validation(
     step_bars: int,
     period_hours: float,
     artifact_path: str | None = None,
+    sentiment_samples: Sequence[SentimentSample] | None = None,
 ) -> WalkForwardValidationResult:
     """Run the same strategy over multiple rolling candle windows.
 
     Supports both RSI+MA and ML signal strategies.  For ML signal
     strategies, *artifact_path* must point to the trained model artifact.
+
+    *sentiment_samples* is forwarded to each window's engine call so the
+    Phase 17.3 sentiment filter can gate entries identically across windows
+    without re-querying the database.
     """
     if initial_equity <= 0:
         raise ValueError("initial_equity must be positive")
@@ -91,12 +98,14 @@ def run_walk_forward_validation(
                 config,
                 artifact_path=artifact_path,  # type: ignore[arg-type]
                 initial_equity=initial_equity,
+                sentiment_samples=sentiment_samples,
             )
         else:
             result = run_backtest_rsi_ma(
                 window_candles,
                 config,  # type: ignore[arg-type]
                 initial_equity=initial_equity,
+                sentiment_samples=sentiment_samples,
             )
         metrics = compute_metrics_from_result(result, period_hours=period_hours)
         windows.append(

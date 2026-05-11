@@ -1,10 +1,16 @@
 """
-Synchronous backtest engine (Phase 6.1).
+Synchronous backtest engine (Phase 6.1 + 17.3 sentiment filter).
 
 Signal generation + execution loop with fees and slippage.
 Strategy: RSI + MA (buy when RSI < buy_threshold and price > MA;
 sell when RSI > sell_threshold or stop loss / take profit hit).
+
+When ``config.sentiment_filter`` is provided and enabled, new long entries
+are additionally gated by the aggregate sentiment over the configured
+lookback window (Phase 17.3).  Exits are never gated.
 """
+
+from typing import Sequence
 
 from app.schemas.strategy_config import RsiMaConfig
 from app.services.backtest.indicators import rsi, sma
@@ -14,12 +20,18 @@ from app.services.backtest.types import (
     BacktestTrade,
     EquityPoint,
 )
+from app.services.sentiment.filter import (
+    SentimentSample,
+    evaluate_sentiment_gate,
+)
 
 
 def run_backtest_rsi_ma(
     candles: list[BacktestCandle],
     config: RsiMaConfig,
     initial_equity: float = 10_000.0,
+    *,
+    sentiment_samples: Sequence[SentimentSample] | None = None,
 ) -> BacktestResult:
     """
     Run a synchronous backtest with RSI+MA strategy.
@@ -72,6 +84,9 @@ def run_backtest_rsi_ma(
     stop_loss_pct = config.stop_loss_pct
     take_profit_pct = config.take_profit_pct
     position_size_pct = config.position_size_pct
+
+    sentiment_cfg = config.sentiment_filter
+    samples_seq: Sequence[SentimentSample] = sentiment_samples or ()
 
     def _equity(bar_close: float) -> float:
         return cash + position * bar_close
@@ -126,6 +141,14 @@ def run_backtest_rsi_ma(
 
         # --- Flat: check buy signal at close ---
         if position <= 0 and rsi_val < buy_threshold and c.close > ma_val:
+            # Phase 17.3 sentiment gate (only applied to NEW long entries).
+            if sentiment_cfg is not None and sentiment_cfg.enabled:
+                gate = evaluate_sentiment_gate(
+                    samples_seq, as_of=c.timestamp, config=sentiment_cfg
+                )
+                if not gate.allow_long:
+                    equity_curve.append(EquityPoint(c.timestamp, _equity(c.close)))
+                    continue
             equity_before = cash
             notional = equity_before * position_size_pct
             if notional <= 0:

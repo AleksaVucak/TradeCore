@@ -21,6 +21,10 @@ from app.services.backtest.types import (
     EquityPoint,
 )
 from app.services.ml.signal_training import compute_all_catalog_features
+from app.services.sentiment.filter import (
+    SentimentSample,
+    evaluate_sentiment_gate,
+)
 
 
 def _load_signal_model(artifact_path: str) -> tuple:
@@ -107,6 +111,7 @@ def run_backtest_ml_signal(
     *,
     artifact_path: str,
     initial_equity: float = 10_000.0,
+    sentiment_samples: Sequence[SentimentSample] | None = None,
 ) -> BacktestResult:
     """Run a synchronous backtest using an ML signal strategy.
 
@@ -175,6 +180,9 @@ def run_backtest_ml_signal(
     take_profit_pct = config.take_profit_pct
     position_size_pct = config.position_size_pct
 
+    sentiment_cfg = config.sentiment_filter
+    samples_seq: Sequence[SentimentSample] = sentiment_samples or ()
+
     def _equity(bar_close: float) -> float:
         return cash + position * bar_close
 
@@ -231,6 +239,14 @@ def run_backtest_ml_signal(
 
         # --- Flat: check ML buy signal ---
         if position <= 0 and proba >= long_threshold:
+            # Phase 17.3 sentiment gate (only applied to NEW long entries).
+            if sentiment_cfg is not None and sentiment_cfg.enabled:
+                gate = evaluate_sentiment_gate(
+                    samples_seq, as_of=c.timestamp, config=sentiment_cfg
+                )
+                if not gate.allow_long:
+                    equity_curve.append(EquityPoint(c.timestamp, _equity(c.close)))
+                    continue
             equity_before = cash
             notional = equity_before * position_size_pct
             if notional <= 0:

@@ -34,6 +34,10 @@ from app.services.backtest import BacktestCandle, run_walk_forward_validation
 from app.services.backtest.benchmark import compute_benchmark
 from app.services.backtest.monte_carlo import compute_monte_carlo
 from app.services.backtest.risk_metrics import compute_risk_metrics
+from app.services.sentiment.filter import (
+    SentimentSample,
+    load_sentiment_history,
+)
 from app.tasks.backtests import run_backtest_task
 
 logger = get_logger(__name__)
@@ -273,6 +277,18 @@ def run_walk_forward_backtest(
             )
         artifact_path = model_meta.artifact_path
 
+    sentiment_samples: list[SentimentSample] = []
+    sentiment_filter_cfg = getattr(validated_config, "sentiment_filter", None)
+    if sentiment_filter_cfg is not None and sentiment_filter_cfg.enabled:
+        from datetime import timedelta as _td
+
+        sentiment_samples = load_sentiment_history(
+            db,
+            symbol_id=body.symbol_id,
+            start=start_dt - _td(hours=sentiment_filter_cfg.lookback_hours),
+            end=end_dt,
+        )
+
     result = run_walk_forward_validation(
         candles,
         validated_config,
@@ -281,6 +297,7 @@ def run_walk_forward_backtest(
         step_bars=body.step_bars,
         period_hours=_timeframe_to_hours(body.timeframe),
         artifact_path=artifact_path,
+        sentiment_samples=sentiment_samples or None,
     )
 
     logger.info(

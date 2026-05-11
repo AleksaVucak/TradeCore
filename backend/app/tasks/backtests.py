@@ -23,6 +23,10 @@ from app.services.backtest import (
     run_backtest_rsi_ma,
 )
 from app.services.backtest.ml_engine import run_backtest_ml_signal
+from app.services.sentiment.filter import (
+    SentimentSample,
+    load_sentiment_history,
+)
 
 logger = get_logger(__name__)
 
@@ -187,6 +191,29 @@ def run_backtest_task(
             strategy_type=strategy.strategy_type,
         )
 
+        sentiment_samples: list[SentimentSample] = []
+        sentiment_filter_cfg = getattr(validated_config, "sentiment_filter", None)
+        if sentiment_filter_cfg is not None and sentiment_filter_cfg.enabled:
+            from datetime import timedelta
+
+            history_start = start_dt - timedelta(
+                hours=sentiment_filter_cfg.lookback_hours
+            )
+            sentiment_samples = load_sentiment_history(
+                db,
+                symbol_id=symbol_id,
+                start=history_start,
+                end=end_dt,
+            )
+            logger.info(
+                "sentiment_filter_loaded",
+                run_id=run_id,
+                symbol_id=symbol_id,
+                lookback_hours=sentiment_filter_cfg.lookback_hours,
+                samples=len(sentiment_samples),
+                mode=sentiment_filter_cfg.mode,
+            )
+
         if strategy.strategy_type == "ml_signal":
             if not isinstance(validated_config, MlSignalConfig):
                 raise ValueError("Validated config type mismatch for ml_signal strategy")
@@ -213,12 +240,16 @@ def run_backtest_task(
                 validated_config,
                 artifact_path=model_meta.artifact_path,
                 initial_equity=initial_equity,
+                sentiment_samples=sentiment_samples or None,
             )
         elif strategy.strategy_type == "rsi_ma":
             if not isinstance(validated_config, RsiMaConfig):
                 raise ValueError("Validated config type mismatch for rsi_ma strategy")
             bt_result = run_backtest_rsi_ma(
-                candles_bt, validated_config, initial_equity=initial_equity
+                candles_bt,
+                validated_config,
+                initial_equity=initial_equity,
+                sentiment_samples=sentiment_samples or None,
             )
         else:
             raise ValueError(

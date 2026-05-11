@@ -39,6 +39,71 @@ ML_FEATURE_CATALOG: list[str] = [
 ]
 
 # ---------------------------------------------------------------------------
+# Sentiment filter sub-config (Phase 17.3)
+# ---------------------------------------------------------------------------
+
+SentimentFilterMode = Literal["block_negative", "require_positive", "threshold"]
+
+
+class SentimentFilterConfig(BaseModel):
+    """Optional sentiment gate applied to strategy entries (Phase 17.3).
+
+    When attached to a strategy config, the backtest engine evaluates the
+    aggregate sentiment for the trading symbol over the configured lookback
+    window **using only sentiment data published strictly before the current
+    candle's timestamp** (no look-ahead).  The decision can:
+
+    * **block_negative** — block new long entries while aggregate score is
+      strictly below ``min_score`` (default 0).
+    * **require_positive** — only allow new long entries while aggregate score
+      is strictly above ``min_score`` (default 0).
+    * **threshold** — only allow new long entries while aggregate score is
+      within ``[min_score, max_score]``.
+
+    Exits (stop-loss, take-profit, strategy-defined sell signals) are never
+    gated; risk management always takes precedence over sentiment.
+    """
+
+    enabled: bool = Field(True, description="Master switch for this filter")
+    mode: SentimentFilterMode = Field(
+        "block_negative",
+        description="How aggregate sentiment is interpreted into a trading gate",
+    )
+    lookback_hours: int = Field(
+        24, ge=1, le=720,
+        description="How far back to aggregate sentiment when evaluating each bar",
+    )
+    min_score: float = Field(
+        0.0, ge=-1.0, le=1.0,
+        description="Lower bound for allowed aggregate score (mode-dependent)",
+    )
+    max_score: float = Field(
+        1.0, ge=-1.0, le=1.0,
+        description="Upper bound (only used by 'threshold' mode)",
+    )
+    min_samples: int = Field(
+        1, ge=1, le=1000,
+        description="Minimum number of sentiment rows required inside the window",
+    )
+    allow_when_missing: bool = Field(
+        True,
+        description=(
+            "If the window has fewer than min_samples rows, allow trades when True "
+            "(fail-open) or block them when False (fail-closed)."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_threshold_bounds(self) -> "SentimentFilterConfig":
+        if self.mode == "threshold" and self.max_score < self.min_score:
+            raise ValueError(
+                "max_score must be >= min_score for sentiment_filter mode='threshold' "
+                f"(got min={self.min_score}, max={self.max_score})"
+            )
+        return self
+
+
+# ---------------------------------------------------------------------------
 # RSI + MA config
 # ---------------------------------------------------------------------------
 
@@ -65,6 +130,11 @@ class RsiMaConfig(BaseModel):
 
     fee_rate: float = Field(0.001, ge=0.0, lt=1.0, description="Fee per trade (0.001 = 0.1%)")
     slippage_rate: float = Field(0.0005, ge=0.0, lt=1.0, description="Slippage assumption (0.0005 = 0.05%)")
+
+    sentiment_filter: SentimentFilterConfig | None = Field(
+        default=None,
+        description="Optional sentiment gate on new long entries (Phase 17.3)",
+    )
 
     @model_validator(mode="after")
     def sell_at_least_buy(self) -> "RsiMaConfig":
@@ -123,6 +193,11 @@ class MlSignalConfig(BaseModel):
 
     fee_rate: float = Field(0.001, ge=0.0, lt=1.0, description="Fee per trade (0.001 = 0.1%)")
     slippage_rate: float = Field(0.0005, ge=0.0, lt=1.0, description="Slippage assumption (0.0005 = 0.05%)")
+
+    sentiment_filter: SentimentFilterConfig | None = Field(
+        default=None,
+        description="Optional sentiment gate on new long entries (Phase 17.3)",
+    )
 
     @model_validator(mode="after")
     def thresholds_ordered(self) -> "MlSignalConfig":
