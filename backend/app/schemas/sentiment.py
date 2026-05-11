@@ -2,11 +2,13 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SentimentScoreOut(BaseModel):
     """Single sentiment score for a headline."""
+
+    model_config = ConfigDict(from_attributes=True)
 
     id: int
     symbol_id: int
@@ -17,9 +19,6 @@ class SentimentScoreOut(BaseModel):
     score: float
     label: str
     created_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 class SentimentSymbolResponse(BaseModel):

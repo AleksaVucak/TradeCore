@@ -58,8 +58,6 @@ def fetch_sentiment_task(
     finally:
         db.close()
 
-    return {"status": "failed", "symbol_id": symbol_id, "symbol": symbol}
-
 
 @celery_app.task(bind=True, max_retries=0)
 def refresh_all_sentiment_task(self) -> dict[str, Any]:
