@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import nltk
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 
 _analyzer: SentimentIntensityAnalyzer | None = None
@@ -17,7 +18,13 @@ _analyzer: SentimentIntensityAnalyzer | None = None
 def _get_analyzer() -> SentimentIntensityAnalyzer:
     global _analyzer
     if _analyzer is None:
-        _analyzer = SentimentIntensityAnalyzer()
+        try:
+            _analyzer = SentimentIntensityAnalyzer()
+        except LookupError:
+            # Ensure CI and fresh environments can initialize VADER without
+            # requiring a separate manual download step.
+            nltk.download("vader_lexicon", quiet=True)
+            _analyzer = SentimentIntensityAnalyzer()
     return _analyzer
 
 

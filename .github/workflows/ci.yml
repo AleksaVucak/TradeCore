@@ -64,6 +64,9 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
+      - name: Download NLTK VADER lexicon
+        run: python -c "import nltk; nltk.download('vader_lexicon', quiet=True)"
+
       - name: Run database migrations
         run: alembic upgrade head
 
