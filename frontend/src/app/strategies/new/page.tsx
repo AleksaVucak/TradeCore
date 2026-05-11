@@ -17,7 +17,9 @@ import {
   regimesApi,
   strategiesApi,
   type ModelInfoOut,
+  type SentimentFilterConfig,
 } from "@/lib/api/endpoints";
+import { SentimentFilterEditor } from "@/components/SentimentFilterEditor";
 import { getToken } from "@/lib/auth";
 
 // ---------------------------------------------------------------------------
@@ -102,6 +104,10 @@ export default function NewStrategyPage() {
   const [rsiMa, setRsiMa] = useState<RsiMaForm>(initialRsiMaForm);
   const [mlSignal, setMlSignal] = useState<MlSignalForm>(initialMlSignalForm);
   const [selectedFeatures, setSelectedFeatures] = useState<string[]>(DEFAULT_ML_FEATURES);
+  // Phase 17.3 — optional sentiment gate, shared across both strategy types.
+  const [sentimentFilter, setSentimentFilter] = useState<SentimentFilterConfig | null>(
+    null,
+  );
 
   const [featureCatalog, setFeatureCatalog] = useState<string[]>([]);
   const [models, setModels] = useState<ModelInfoOut[]>([]);
@@ -149,6 +155,11 @@ export default function NewStrategyPage() {
       return null;
     }
 
+    const sentimentExtra =
+      sentimentFilter && sentimentFilter.enabled
+        ? { sentiment_filter: sentimentFilter }
+        : {};
+
     if (strategyType === "rsi_ma") {
       return {
         name: trimmedName,
@@ -167,6 +178,7 @@ export default function NewStrategyPage() {
           take_profit_pct: Number(rsiMa.take_profit_pct) || undefined,
           fee_rate: Number(rsiMa.fee_rate) || undefined,
           slippage_rate: Number(rsiMa.slippage_rate) || undefined,
+          ...sentimentExtra,
         },
       };
     }
@@ -198,6 +210,7 @@ export default function NewStrategyPage() {
         take_profit_pct: Number(mlSignal.take_profit_pct) || undefined,
         fee_rate: Number(mlSignal.fee_rate) || undefined,
         slippage_rate: Number(mlSignal.slippage_rate) || undefined,
+        ...sentimentExtra,
       },
     };
   }
@@ -491,6 +504,12 @@ export default function NewStrategyPage() {
                   </div>
                 </>
               )}
+
+              {/* ---------- Sentiment filter (Phase 17.3) ---------- */}
+              <SentimentFilterEditor
+                value={sentimentFilter}
+                onChange={setSentimentFilter}
+              />
 
               {/* ---------- Actions ---------- */}
               <div className="flex items-center justify-end gap-3 pt-2">

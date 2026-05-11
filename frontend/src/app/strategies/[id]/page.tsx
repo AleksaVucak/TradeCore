@@ -18,10 +18,15 @@ import {
   strategiesApi,
   symbolsApi,
   type ModelInfoOut,
+  type SentimentFilterConfig,
   type StrategyDetail,
   type Symbol,
 } from "@/lib/api/endpoints";
 import { Progress } from "@/components/ui/progress";
+import {
+  SentimentFilterEditor,
+  sentimentFilterFromJson,
+} from "@/components/SentimentFilterEditor";
 import { getToken } from "@/lib/auth";
 
 // ---------------------------------------------------------------------------
@@ -136,6 +141,11 @@ export default function StrategyDetailPage() {
 
   // ML Signal config form
   const [mlForm, setMlForm] = useState<MlSignalConfigForm | null>(null);
+
+  // Phase 17.3 — optional sentiment filter (shared across both strategy types)
+  const [sentimentFilter, setSentimentFilter] = useState<SentimentFilterConfig | null>(
+    null,
+  );
   const [selectedFeatures, setSelectedFeatures] = useState<string[]>(DEFAULT_ML_FEATURES);
   const [featureCatalog, setFeatureCatalog] = useState<string[]>([]);
   // Only signal models are valid for backtesting; this list is pre-filtered
@@ -275,6 +285,10 @@ export default function StrategyDetailPage() {
           setRsiForm(rsiMaFormFromConfig(cfg));
           setMlForm(null);
         }
+
+        setSentimentFilter(
+          cfg ? sentimentFilterFromJson(cfg.sentiment_filter) : null,
+        );
       })
       .catch((err) => {
         const msg = err instanceof Error ? err.message : "Failed to load strategy.";
@@ -367,6 +381,12 @@ export default function StrategyDetailPage() {
       return;
     }
 
+    // Phase 17.3 — only emit sentiment_filter when explicitly enabled so older
+    // versions stay clean and the backend Pydantic default (None) wins.
+    if (sentimentFilter && sentimentFilter.enabled) {
+      configPayload = { ...configPayload, sentiment_filter: sentimentFilter };
+    }
+
     strategiesApi
       .createVersion(token, strategy.id, { config: configPayload })
       .then((updated) => {
@@ -381,6 +401,7 @@ export default function StrategyDetailPage() {
         } else {
           setRsiForm(rsiMaFormFromConfig(cfg));
         }
+        setSentimentFilter(sentimentFilterFromJson(cfg.sentiment_filter));
         router.refresh();
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to create new version."))
@@ -628,6 +649,11 @@ export default function StrategyDetailPage() {
                       </div>
                     </div>
 
+                    <SentimentFilterEditor
+                      value={sentimentFilter}
+                      onChange={setSentimentFilter}
+                    />
+
                     <div className="flex items-center justify-end gap-3 pt-2">
                       <Button type="submit" size="sm" disabled={savingConfig || !token}>
                         {savingConfig ? "Saving…" : "Save as new version"}
@@ -832,6 +858,11 @@ export default function StrategyDetailPage() {
                         </div>
                       </div>
                     </div>
+
+                    <SentimentFilterEditor
+                      value={sentimentFilter}
+                      onChange={setSentimentFilter}
+                    />
 
                     <div className="flex items-center justify-end gap-3 pt-2">
                       <Button type="submit" size="sm" disabled={savingConfig || !token}>

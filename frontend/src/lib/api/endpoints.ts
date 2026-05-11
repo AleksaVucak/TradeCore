@@ -512,6 +512,36 @@ export const regimesApi = {
   },
 };
 
+export type SentimentFilterMode =
+  | "block_negative"
+  | "require_positive"
+  | "threshold";
+
+/**
+ * Phase 17.3 — optional sentiment gate on strategy entries. Mirrors the backend
+ * Pydantic SentimentFilterConfig 1:1. Strategy editors should render UI bound to
+ * these fields and persist them inside the strategy version's `config` JSON.
+ */
+export type SentimentFilterConfig = {
+  enabled: boolean;
+  mode: SentimentFilterMode;
+  lookback_hours: number;
+  min_score: number;
+  max_score: number;
+  min_samples: number;
+  allow_when_missing: boolean;
+};
+
+export const SENTIMENT_FILTER_DEFAULTS: SentimentFilterConfig = {
+  enabled: true,
+  mode: "block_negative",
+  lookback_hours: 24,
+  min_score: 0.0,
+  max_score: 1.0,
+  min_samples: 1,
+  allow_when_missing: true,
+};
+
 export type SentimentScoreOut = {
   id: number;
   symbol_id: number;

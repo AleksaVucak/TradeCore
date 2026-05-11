@@ -22,6 +22,7 @@ import {
   type ModelInfoOut,
   type Symbol,
 } from "@/lib/api/endpoints";
+import { SentimentPanel } from "@/components/SentimentPanel";
 import { getToken } from "@/lib/auth";
 
 const TIMEFRAMES = ["1h", "4h"] as const;
@@ -87,10 +88,15 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 export default function MarketDataPage() {
+  const [token, setToken] = useState<string | null>(null);
   const [symbols, setSymbols] = useState<Symbol[]>([]);
   const [symbolsLoading, setSymbolsLoading] = useState(true);
   const [selectedSymbolId, setSelectedSymbolId] = useState<string>("");
   const [timeframe, setTimeframe] = useState<(typeof TIMEFRAMES)[number]>("1h");
+
+  useEffect(() => {
+    queueMicrotask(() => setToken(getToken()));
+  }, []);
   const [startDate, setStartDate] = useState(() => {
     const start = new Date();
     start.setDate(start.getDate() - 30);
@@ -580,6 +586,19 @@ export default function MarketDataPage() {
             )}
           </CardContent>
         </Card>
+
+        {/* Phase 17.4 — sentiment panel for the currently selected symbol */}
+        {selectedSymbol && (
+          <div className="mt-6">
+            <SentimentPanel
+              token={token}
+              symbol={selectedSymbol.symbol}
+              symbolId={selectedSymbol.id}
+              showRefresh
+              description={`Recent news sentiment for ${selectedSymbol.symbol}. Use "Refresh news" to enqueue a fresh fetch from the Phase 17.1 pipeline.`}
+            />
+          </div>
+        )}
 
         <Card className="mt-6">
           <CardHeader>

@@ -13,6 +13,7 @@ import {
   backtestsApi,
   marketDataApi,
   regimesApi,
+  symbolsApi,
   type BacktestRunDetail,
   type BenchmarkResponse,
   type CandleResponse,
@@ -21,6 +22,7 @@ import {
   type RegimePerformanceResponse,
 } from "@/lib/api/endpoints";
 import { getToken } from "@/lib/auth";
+import { SentimentPanel } from "@/components/SentimentPanel";
 import {
   CandlestickChart,
   type OhlcCandle,
@@ -215,6 +217,27 @@ export function RunDetailClient({ runId }: { runId: string }) {
   const [regimeLabels, setRegimeLabels] = useState<RegimeLabelOut[]>([]);
   const [regimePerformance, setRegimePerformance] = useState<RegimePerformanceResponse | null>(null);
   const [modelInfo, setModelInfo] = useState<ModelInfoOut | null>(null);
+  const [symbolName, setSymbolName] = useState<string | null>(null);
+
+  // Resolve symbol_id → symbol string so SentimentPanel (Phase 17.4) can call
+  // the backend, which keys sentiment off the symbol string (e.g. "BTCUSD").
+  useEffect(() => {
+    if (!run) return;
+    let cancelled = false;
+    symbolsApi
+      .list()
+      .then((symbols) => {
+        if (cancelled) return;
+        const match = symbols.find((s) => s.id === run.symbol_id);
+        setSymbolName(match?.symbol ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setSymbolName(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [run]);
 
   useEffect(() => {
     if (!run || run.status !== "completed") return;
@@ -592,6 +615,21 @@ export function RunDetailClient({ runId }: { runId: string }) {
         runStatus={run.status}
         closedTradeCount={closedTradeCount}
       />
+
+      {/* News sentiment for the run window (Phase 17.4) */}
+      {symbolName && (
+        <div className="mt-6">
+          <SentimentPanel
+            token={getToken()}
+            symbol={symbolName}
+            start={run.start_time}
+            end={run.end_time}
+            limit={50}
+            title="News sentiment during run"
+            description={`Headlines scored between ${formatDateRange(run.start_time, run.end_time)} (${symbolName}).`}
+          />
+        </div>
+      )}
 
       {/* Equity curve chart with benchmark (Phase 12.4) */}
       <Card className="mt-6">
