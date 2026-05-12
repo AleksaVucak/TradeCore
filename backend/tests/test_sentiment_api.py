@@ -7,6 +7,7 @@ is isolated and rolled back automatically.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from itertools import count
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -17,6 +18,8 @@ from app.models.sentiment_score import SentimentScore
 from app.models.symbol import Symbol
 from app.models.user import User
 
+_SEED_BATCH_COUNTER = count()
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -25,6 +28,10 @@ from app.models.user import User
 def _get_or_create_symbol(db: Session, symbol: str, base: str, quote: str) -> Symbol:
     existing = db.query(Symbol).filter(Symbol.symbol == symbol).first()
     if existing:
+        # Keep tests deterministic even if local/dev DB already has sentiment rows
+        # for this symbol from manual testing.
+        db.query(SentimentScore).filter(SentimentScore.symbol_id == existing.id).delete()
+        db.flush()
         return existing
     s = Symbol(symbol=symbol, base_asset=base, quote_asset=quote, is_active=True)
     db.add(s)
@@ -43,13 +50,14 @@ def _seed_sentiment(
 ) -> list[SentimentScore]:
     """Insert `count` sentiment rows and return them."""
     base = base_time or datetime(2026, 5, 10, 12, 0, 0, tzinfo=timezone.utc)
+    batch = next(_SEED_BATCH_COUNTER)
     rows = []
     for i in range(count):
         row = SentimentScore(
             symbol_id=symbol_id,
             source="TestSource",
-            headline=f"Test headline {i}",
-            url=f"https://example.com/{i}",
+            headline=f"Test headline b{batch}-{i}",
+            url=f"https://example.com/b{batch}/{i}",
             published_at=base - timedelta(hours=i),
             score=score,
             label=label,
