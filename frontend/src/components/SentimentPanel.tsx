@@ -79,12 +79,18 @@ export function SentimentPanel({
   showAggregate = true,
   showList = true,
 }: SentimentPanelProps) {
+  const [visibleLimit, setVisibleLimit] = useState(limit);
   const [aggregate, setAggregate] = useState<SentimentAggregateOut | null>(null);
   const [scores, setScores] = useState<SentimentScoreOut[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshNotice, setRefreshNotice] = useState<string | null>(null);
+
+  // Reset pagination whenever query context changes.
+  useEffect(() => {
+    setVisibleLimit(limit);
+  }, [limit, symbol, start, end]);
 
   const load = useCallback(async () => {
     if (!token || !symbol) {
@@ -109,7 +115,7 @@ export function SentimentPanel({
     if (showList) {
       requests.push(
         sentimentApi.getForSymbol(token, symbol, {
-          limit,
+          limit: visibleLimit,
           start: start ?? undefined,
           end: end ?? undefined,
         }),
@@ -145,7 +151,7 @@ export function SentimentPanel({
     }
 
     setLoading(false);
-  }, [token, symbol, start, end, limit, showAggregate, showList]);
+  }, [token, symbol, start, end, visibleLimit, showAggregate, showList]);
 
   useEffect(() => {
     load();
@@ -196,6 +202,12 @@ export function SentimentPanel({
   const aggregateBadgeClass = aggregate
     ? labelClass(aggregate.overall_label)
     : LABEL_COLOR.neutral;
+  const canLoadMore =
+    !loading &&
+    !error &&
+    showList &&
+    scores.length > 0 &&
+    (aggregate ? scores.length < aggregate.total : scores.length >= visibleLimit);
 
   return (
     <Card>
@@ -325,68 +337,83 @@ export function SentimentPanel({
                 </ol>
               </div>
             ) : (
-              <div className="overflow-hidden rounded-lg border">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
-                    <tr>
-                      <th className="text-left font-medium px-3 py-2">
-                        Headline
-                      </th>
-                      <th className="text-left font-medium px-3 py-2 hidden sm:table-cell">
-                        Source
-                      </th>
-                      <th className="text-left font-medium px-3 py-2">Label</th>
-                      <th className="text-right font-medium px-3 py-2">
-                        Score
-                      </th>
-                      <th className="text-left font-medium px-3 py-2 hidden md:table-cell">
-                        Published
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {scores.map((row) => (
-                      <tr
-                        key={row.id}
-                        className="border-t border-border/60 hover:bg-muted/30"
-                      >
-                        <td className="px-3 py-2 max-w-xs">
-                          {row.url ? (
-                            <a
-                              href={row.url}
-                              target="_blank"
-                              rel="noreferrer noopener"
-                              className="text-primary underline-offset-4 hover:underline line-clamp-2"
-                              title={row.headline}
-                            >
-                              {row.headline}
-                            </a>
-                          ) : (
-                            <span className="line-clamp-2" title={row.headline}>
-                              {row.headline}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-muted-foreground hidden sm:table-cell">
-                          {row.source}
-                        </td>
-                        <td className="px-3 py-2">
-                          <span
-                            className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium capitalize ${labelClass(row.label)}`}
-                          >
-                            {row.label}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          {formatScore(row.score)}
-                        </td>
-                        <td className="px-3 py-2 text-muted-foreground hidden md:table-cell whitespace-nowrap">
-                          {formatPublished(row.published_at)}
-                        </td>
+              <div className="space-y-3">
+                <div className="overflow-hidden rounded-lg border">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
+                      <tr>
+                        <th className="text-left font-medium px-3 py-2">
+                          Headline
+                        </th>
+                        <th className="text-left font-medium px-3 py-2 hidden sm:table-cell">
+                          Source
+                        </th>
+                        <th className="text-left font-medium px-3 py-2">Label</th>
+                        <th className="text-right font-medium px-3 py-2">
+                          Score
+                        </th>
+                        <th className="text-left font-medium px-3 py-2 hidden md:table-cell">
+                          Published
+                        </th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {scores.map((row) => (
+                        <tr
+                          key={row.id}
+                          className="border-t border-border/60 hover:bg-muted/30"
+                        >
+                          <td className="px-3 py-2 max-w-xs">
+                            {row.url ? (
+                              <a
+                                href={row.url}
+                                target="_blank"
+                                rel="noreferrer noopener"
+                                className="text-primary underline-offset-4 hover:underline line-clamp-2"
+                                title={row.headline}
+                              >
+                                {row.headline}
+                              </a>
+                            ) : (
+                              <span className="line-clamp-2" title={row.headline}>
+                                {row.headline}
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground hidden sm:table-cell">
+                            {row.source}
+                          </td>
+                          <td className="px-3 py-2">
+                            <span
+                              className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium capitalize ${labelClass(row.label)}`}
+                            >
+                              {row.label}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums">
+                            {formatScore(row.score)}
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground hidden md:table-cell whitespace-nowrap">
+                            {formatPublished(row.published_at)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {canLoadMore && (
+                  <div className="flex items-center justify-center">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setVisibleLimit((prev) => prev + limit)}
+                      disabled={loading}
+                    >
+                      Load more
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
           </div>
