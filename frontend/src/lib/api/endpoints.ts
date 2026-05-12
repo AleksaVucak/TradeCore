@@ -574,7 +574,27 @@ export type SentimentAggregateOut = {
 
 export type SentimentRefreshResponse = {
   status: string;
-  task_id: string;
+  task_id?: string;
+  symbol?: string;
+  symbol_id?: number;
+  fetched?: number;
+  new?: number;
+  skipped?: number;
+  fetch_status?: string;
+  fetch_detail?: string;
+};
+
+export type SentimentStatusItem = {
+  symbol: string;
+  symbol_id: number;
+  total_scores: number;
+  newest_published_at: string | null;
+  oldest_published_at: string | null;
+};
+
+export type SentimentStatusResponse = {
+  newsapi_key_set: boolean;
+  symbols: SentimentStatusItem[];
 };
 
 export const sentimentApi = {
@@ -610,9 +630,16 @@ export const sentimentApi = {
   },
   refresh: (
     token: string,
-    body: { symbol_id: number; lookback_days?: number }
+    body: { symbol_id: number; lookback_days?: number },
+    options?: { sync?: boolean }
   ) =>
-    api.post<SentimentRefreshResponse>("/api/v1/sentiment/refresh", body, token),
+    api.post<SentimentRefreshResponse>(
+      `/api/v1/sentiment/refresh${options?.sync ? "?async=false" : ""}`,
+      body,
+      token
+    ),
+  status: (token: string) =>
+    api.get<SentimentStatusResponse>("/api/v1/sentiment/status", token),
 };
 
 export const marketDataApi = {

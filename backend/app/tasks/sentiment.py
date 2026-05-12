@@ -1,4 +1,4 @@
-"""Celery tasks for the sentiment pipeline (Phase 17.1)."""
+"""Celery tasks for the sentiment pipeline (Phase 17.1 + 17.5)."""
 
 from __future__ import annotations
 
@@ -20,7 +20,9 @@ def fetch_sentiment_task(
 ) -> dict[str, Any]:
     """Fetch news + score sentiment for a single symbol.
 
-    Intended to be called individually or from the periodic refresh task.
+    Phase 17.5: the return dict now includes ``fetch_status`` and
+    ``fetch_detail`` propagated from the pipeline so the refresh API
+    can relay them to the frontend.
     """
     db = SessionLocal()
     try:
@@ -54,6 +56,8 @@ def fetch_sentiment_task(
                 "symbol_id": symbol_id,
                 "symbol": symbol,
                 "error": str(exc),
+                "fetch_status": "error",
+                "fetch_detail": str(exc),
             }
     finally:
         db.close()

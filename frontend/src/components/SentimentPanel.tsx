@@ -1,12 +1,15 @@
 "use client";
 
 /**
- * Phase 17.4 — reusable sentiment display component.
+ * Phase 17.4 + 17.5 — reusable sentiment display component.
  *
  * Shows aggregate sentiment statistics and the most recent scored headlines
- * for a single symbol, fed by the Phase 17.2 sentiment API. Used on the
- * market-data screen (current symbol context) and run detail screen
- * (run date range).
+ * for a single symbol. Phase 17.5 improvements:
+ * - Uses synchronous refresh (``?async=false``) so immediate diagnostics
+ *   (fetch_status, fetch_detail, new-article count) are shown inline.
+ * - Actionable empty-state messages distinguish "no key", "rate limited",
+ *   "no articles for query" vs. "data exists but outside the date range".
+ * - Auto-reloads data after a successful sync refresh.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -26,27 +29,16 @@ import {
 } from "@/lib/api/endpoints";
 
 type SentimentPanelProps = {
-  /** Token used for all sentiment API calls. */
   token: string | null;
-  /** Symbol string used in URL (e.g. "BTCUSD"). */
   symbol: string;
-  /** Symbol primary key — only needed if `showRefresh` is true. */
   symbolId?: number | null;
-  /** Optional ISO-8601 lower bound. Both aggregate and list use it. */
   start?: string | null;
-  /** Optional ISO-8601 upper bound. Both aggregate and list use it. */
   end?: string | null;
-  /** How many recent rows to fetch. Default 20, capped server-side at 500. */
   limit?: number;
-  /** Optional title override (defaults to "News sentiment"). */
   title?: string;
-  /** Optional description override. */
   description?: string;
-  /** Show the "Refresh news" button (requires `symbolId`). */
   showRefresh?: boolean;
-  /** When true, fetch aggregate stats. Default true. */
   showAggregate?: boolean;
-  /** When true, fetch + render recent score list. Default true. */
   showList?: boolean;
 };
 
@@ -131,7 +123,6 @@ export function SentimentPanel({
     if (aggResult.status === "fulfilled") {
       setAggregate((aggResult.value as SentimentAggregateOut | null) ?? null);
     } else if (showAggregate) {
-      // Don't blow up the whole panel if aggregate fails but list succeeds.
       setAggregate(null);
     }
 
@@ -142,8 +133,7 @@ export function SentimentPanel({
       setScores([]);
     }
 
-    const aggFailed =
-      showAggregate && aggResult.status === "rejected";
+    const aggFailed = showAggregate && aggResult.status === "rejected";
     const listFailed = showList && listResult.status === "rejected";
     if (aggFailed && listFailed) {
       const reason =
@@ -167,10 +157,33 @@ export function SentimentPanel({
     setRefreshNotice(null);
     setError(null);
     try {
-      await sentimentApi.refresh(token, { symbol_id: symbolId });
-      setRefreshNotice(
-        "Refresh queued. New headlines will appear once the worker finishes.",
+      const res = await sentimentApi.refresh(
+        token,
+        { symbol_id: symbolId },
+        { sync: true },
       );
+
+      if (res.fetch_status && res.fetch_status !== "ok") {
+        const detail = res.fetch_detail || "Unknown issue.";
+        setRefreshNotice(null);
+        setError(detail);
+      } else if (res.status === "completed") {
+        const newCount = res.new ?? 0;
+        if (newCount > 0) {
+          setRefreshNotice(
+            `Refresh complete — ${newCount} new headline${newCount === 1 ? "" : "s"} scored and stored.`,
+          );
+          load();
+        } else {
+          setRefreshNotice(
+            "Refresh complete — no new headlines found. All recent articles were already stored.",
+          );
+        }
+      } else {
+        setRefreshNotice(
+          "Refresh queued. New headlines will appear once the worker finishes.",
+        );
+      }
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Failed to enqueue refresh.",
@@ -178,7 +191,7 @@ export function SentimentPanel({
     } finally {
       setRefreshing(false);
     }
-  }, [token, symbolId]);
+  }, [token, symbolId, load]);
 
   const aggregateBadgeClass = aggregate
     ? labelClass(aggregate.overall_label)
@@ -192,7 +205,7 @@ export function SentimentPanel({
             <CardTitle className="text-base">{title}</CardTitle>
             <CardDescription>
               {description ??
-                `Recent news sentiment for ${symbol}. Updated by the Phase 17.1 pipeline.`}
+                `Recent news sentiment for ${symbol}. Updated by the sentiment pipeline.`}
             </CardDescription>
           </div>
           {showRefresh && symbolId != null && (
@@ -226,7 +239,10 @@ export function SentimentPanel({
         )}
 
         {token && !loading && error && (
-          <p className="text-sm text-destructive">{error}</p>
+          <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive space-y-1">
+            <p className="font-medium">Sentiment refresh issue</p>
+            <p>{error}</p>
+          </div>
         )}
 
         {token && !loading && !error && refreshNotice && (
@@ -279,11 +295,34 @@ export function SentimentPanel({
         {token && !loading && !error && showList && (
           <div>
             {scores.length === 0 ? (
-              <div className="rounded-lg border border-dashed bg-muted/20 p-4 text-sm text-muted-foreground">
-                No sentiment data yet for {symbol}. Configure{" "}
-                <code className="font-mono text-xs">NEWSAPI_KEY</code> and run
-                the worker/beat services, then click{" "}
-                <span className="font-medium">Refresh news</span>.
+              <div className="rounded-lg border border-dashed bg-muted/20 p-4 text-sm text-muted-foreground space-y-2">
+                <p>
+                  No sentiment data yet for <strong>{symbol}</strong>.
+                </p>
+                <ol className="list-decimal list-inside space-y-1 text-xs">
+                  <li>
+                    Set <code className="font-mono">NEWSAPI_KEY</code> in your
+                    project root <code className="font-mono">.env</code> file
+                    (free at{" "}
+                    <a
+                      href="https://newsapi.org/register"
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      className="text-primary underline-offset-4 hover:underline"
+                    >
+                      newsapi.org
+                    </a>
+                    ).
+                  </li>
+                  <li>
+                    Restart the stack:{" "}
+                    <code className="font-mono">docker compose up --build</code>
+                  </li>
+                  <li>
+                    Click <span className="font-medium">Refresh news</span>{" "}
+                    above. Results appear in seconds.
+                  </li>
+                </ol>
               </div>
             ) : (
               <div className="overflow-hidden rounded-lg border">

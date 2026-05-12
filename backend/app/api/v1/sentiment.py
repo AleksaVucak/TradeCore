@@ -1,7 +1,15 @@
-"""API endpoints for sentiment scores (Phase 17.2).
+"""API endpoints for sentiment scores (Phase 17.2 + 17.5).
 
 Exposes sentiment data stored by the Phase 17.1 pipeline so the frontend
 and other consumers can query recent sentiment for any tracked symbol.
+
+Phase 17.5 additions:
+- ``GET /status`` — returns per-symbol data counts and whether the API key
+  is configured, giving the frontend everything it needs to render
+  actionable empty-state guidance.
+- ``POST /refresh`` now also accepts an ``?async=false`` query param to run
+  the pipeline **synchronously** and return immediate diagnostics (count of
+  new articles, fetch_status, fetch_detail).
 """
 
 from __future__ import annotations
@@ -12,6 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.core.logging import get_logger
 from app.dependencies import get_current_user_id, get_db
 from app.models.sentiment_score import SentimentScore
@@ -21,6 +30,8 @@ from app.schemas.sentiment import (
     SentimentRefreshRequest,
     SentimentRefreshResponse,
     SentimentScoreOut,
+    SentimentStatusItem,
+    SentimentStatusResponse,
     SentimentSymbolResponse,
 )
 
@@ -29,17 +40,78 @@ logger = get_logger(__name__)
 router = APIRouter()
 
 
+# ---------------------------------------------------------------------------
+# Phase 17.5 — status endpoint (placed BEFORE path-parameter routes)
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/status",
+    response_model=SentimentStatusResponse,
+    summary="Sentiment pipeline status overview",
+)
+def get_sentiment_status(
+    _user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Return per-symbol sentiment summary + whether the API key is set.
+
+    The frontend uses this to show actionable guidance when data is empty.
+    """
+    key_set = bool(settings.newsapi_key)
+
+    rows = (
+        db.query(
+            Symbol.symbol,
+            Symbol.id,
+            func.count(SentimentScore.id).label("total"),
+            func.max(SentimentScore.published_at).label("newest"),
+            func.min(SentimentScore.published_at).label("oldest"),
+        )
+        .outerjoin(SentimentScore, SentimentScore.symbol_id == Symbol.id)
+        .filter(Symbol.is_active.is_(True))
+        .group_by(Symbol.symbol, Symbol.id)
+        .order_by(Symbol.symbol)
+        .all()
+    )
+
+    items = [
+        SentimentStatusItem(
+            symbol=r.symbol,
+            symbol_id=r.id,
+            total_scores=r.total or 0,
+            newest_published_at=r.newest,
+            oldest_published_at=r.oldest,
+        )
+        for r in rows
+    ]
+
+    return SentimentStatusResponse(newsapi_key_set=key_set, symbols=items)
+
+
+# ---------------------------------------------------------------------------
+# POST /refresh — unchanged route path; new optional sync mode
+# ---------------------------------------------------------------------------
+
 @router.post(
     "/refresh",
-    response_model=SentimentRefreshResponse,
+    response_model=None,
     summary="Trigger a manual sentiment refresh for a symbol",
 )
 def trigger_sentiment_refresh(
     body: SentimentRefreshRequest,
+    run_async: bool = Query(
+        True,
+        alias="async",
+        description=(
+            "When true (default), the pipeline runs in a Celery worker and "
+            "returns immediately with a task_id. When false, runs synchronously "
+            "and returns diagnostic details (slower but gives immediate feedback)."
+        ),
+    ),
     _user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
-    """Enqueue a Celery task to fetch and score fresh news for the given symbol."""
+    """Enqueue (or run) a sentiment refresh for the given symbol."""
     sym = db.query(Symbol).filter(Symbol.id == body.symbol_id).first()
     if not sym:
         raise HTTPException(
@@ -47,25 +119,53 @@ def trigger_sentiment_refresh(
             detail=f"Symbol with id {body.symbol_id} not found",
         )
 
-    from app.tasks.sentiment import fetch_sentiment_task
+    if run_async:
+        from app.tasks.sentiment import fetch_sentiment_task
 
-    result = fetch_sentiment_task.apply_async(
-        kwargs={
-            "symbol_id": sym.id,
-            "symbol": sym.symbol,
-            "lookback_days": body.lookback_days,
-        },
+        result = fetch_sentiment_task.apply_async(
+            kwargs={
+                "symbol_id": sym.id,
+                "symbol": sym.symbol,
+                "lookback_days": body.lookback_days,
+            },
+        )
+
+        logger.info(
+            "sentiment_refresh_triggered",
+            symbol=sym.symbol,
+            symbol_id=sym.id,
+            task_id=result.id,
+        )
+
+        return SentimentRefreshResponse(status="queued", task_id=result.id)
+
+    from app.services.sentiment.pipeline import run_sentiment_pipeline
+
+    pipeline_result = run_sentiment_pipeline(
+        db,
+        symbol_id=sym.id,
+        symbol=sym.symbol,
+        lookback_days=body.lookback_days,
     )
 
     logger.info(
-        "sentiment_refresh_triggered",
+        "sentiment_refresh_sync_completed",
         symbol=sym.symbol,
         symbol_id=sym.id,
-        task_id=result.id,
+        **pipeline_result,
     )
 
-    return SentimentRefreshResponse(status="queued", task_id=result.id)
+    return {
+        "status": "completed",
+        "symbol": sym.symbol,
+        "symbol_id": sym.id,
+        **pipeline_result,
+    }
 
+
+# ---------------------------------------------------------------------------
+# GET /{symbol} and GET /{symbol}/aggregate — unchanged from Phase 17.2
+# ---------------------------------------------------------------------------
 
 @router.get(
     "/{symbol}",
@@ -81,11 +181,7 @@ def get_sentiment_for_symbol(
     _user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
-    """Return recent sentiment scores for a given symbol string (e.g. BTCUSD).
-
-    - 404 if the symbol does not exist in the symbols table.
-    - 200 + empty list if the symbol exists but has no sentiment data.
-    """
+    """Return recent sentiment scores for a given symbol string (e.g. BTCUSD)."""
     sym = db.query(Symbol).filter(Symbol.symbol == symbol.upper()).first()
     if not sym:
         raise HTTPException(

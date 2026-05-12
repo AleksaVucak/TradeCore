@@ -1,4 +1,4 @@
-"""Tests for the sentiment pipeline (Phase 17.1)."""
+"""Tests for the sentiment pipeline (Phase 17.1 + 17.5)."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 
 # ---------------------------------------------------------------------------
 # VADER scorer tests
@@ -76,16 +77,31 @@ class TestNewsFetcher:
             mock_settings.newsapi_key = ""
             from app.services.sentiment.news_fetcher import fetch_news
 
-            # Re-import to pick up the patched settings
             articles = fetch_news("BTCUSDT")
             assert articles == []
+
+    def test_fetch_with_status_returns_no_api_key(self):
+        with patch("app.services.sentiment.news_fetcher.settings") as mock_settings:
+            mock_settings.newsapi_key = ""
+            from app.services.sentiment.news_fetcher import (
+                FetchStatus,
+                fetch_news_with_status,
+            )
+
+            outcome = fetch_news_with_status("BTCUSDT")
+            assert outcome.status == FetchStatus.NO_API_KEY
+            assert "NEWSAPI_KEY" in outcome.detail
+            assert outcome.articles == []
 
     def test_symbol_query_map(self):
         from app.services.sentiment.news_fetcher import SYMBOL_QUERY_MAP
 
         assert "BTCUSDT" in SYMBOL_QUERY_MAP
+        assert "BTCUSD" in SYMBOL_QUERY_MAP
         assert "ETHUSDT" in SYMBOL_QUERY_MAP
+        assert "ETHUSD" in SYMBOL_QUERY_MAP
         assert "Bitcoin" in SYMBOL_QUERY_MAP["BTCUSDT"]
+        assert "Bitcoin" in SYMBOL_QUERY_MAP["BTCUSD"]
 
     def test_parse_published_valid(self):
         from app.services.sentiment.news_fetcher import _parse_published
@@ -169,15 +185,124 @@ class TestNewsFetcher:
 
         assert articles == []
 
+    @patch("app.services.sentiment.news_fetcher.httpx.get")
+    def test_fetch_with_status_rate_limited(self, mock_get):
+        import httpx
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 429
+        mock_resp.text = "Rate limited"
+        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "429", request=MagicMock(), response=mock_resp
+        )
+        mock_get.return_value = mock_resp
+
+        with patch("app.services.sentiment.news_fetcher.settings") as mock_settings:
+            mock_settings.newsapi_key = "test-key-123"
+            from app.services.sentiment.news_fetcher import (
+                FetchStatus,
+                fetch_news_with_status,
+            )
+
+            outcome = fetch_news_with_status("BTCUSDT")
+            assert outcome.status == FetchStatus.RATE_LIMITED
+            assert "429" in outcome.detail
+            assert outcome.articles == []
+
+    @patch("app.services.sentiment.news_fetcher.httpx.get")
+    def test_fetch_with_status_invalid_key(self, mock_get):
+        import httpx
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 401
+        mock_resp.text = "Unauthorized"
+        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "401", request=MagicMock(), response=mock_resp
+        )
+        mock_get.return_value = mock_resp
+
+        with patch("app.services.sentiment.news_fetcher.settings") as mock_settings:
+            mock_settings.newsapi_key = "bad-key"
+            from app.services.sentiment.news_fetcher import (
+                FetchStatus,
+                fetch_news_with_status,
+            )
+
+            outcome = fetch_news_with_status("BTCUSDT")
+            assert outcome.status == FetchStatus.INVALID_API_KEY
+            assert "401" in outcome.detail
+
+    @patch("app.services.sentiment.news_fetcher.httpx.get")
+    def test_fetch_with_status_no_articles(self, mock_get):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "status": "ok",
+            "totalResults": 0,
+            "articles": [],
+        }
+        mock_get.return_value = mock_resp
+
+        with patch("app.services.sentiment.news_fetcher.settings") as mock_settings:
+            mock_settings.newsapi_key = "test-key-123"
+            from app.services.sentiment.news_fetcher import (
+                FetchStatus,
+                fetch_news_with_status,
+            )
+
+            outcome = fetch_news_with_status("BTCUSDT")
+            assert outcome.status == FetchStatus.NO_ARTICLES
+            assert outcome.articles == []
+
+    @patch("app.services.sentiment.news_fetcher.httpx.get")
+    def test_fetch_with_status_network_error(self, mock_get):
+        import httpx
+
+        mock_get.side_effect = httpx.ConnectError("DNS resolution failed")
+
+        with patch("app.services.sentiment.news_fetcher.settings") as mock_settings:
+            mock_settings.newsapi_key = "test-key-123"
+            from app.services.sentiment.news_fetcher import (
+                FetchStatus,
+                fetch_news_with_status,
+            )
+
+            outcome = fetch_news_with_status("BTCUSDT")
+            assert outcome.status == FetchStatus.NETWORK_ERROR
+            assert "DNS" in outcome.detail or "Network" in outcome.detail
+
 
 # ---------------------------------------------------------------------------
 # Pipeline tests
 # ---------------------------------------------------------------------------
 
 class TestSentimentPipeline:
-    @patch("app.services.sentiment.pipeline.fetch_news")
+    @patch("app.services.sentiment.pipeline.fetch_news_with_status")
+    def test_pipeline_no_api_key(self, mock_fetch):
+        from app.services.sentiment.news_fetcher import FetchOutcome, FetchStatus
+
+        mock_fetch.return_value = FetchOutcome(
+            status=FetchStatus.NO_API_KEY,
+            detail="NEWSAPI_KEY is not configured.",
+        )
+        db = MagicMock()
+
+        from app.services.sentiment.pipeline import run_sentiment_pipeline
+
+        result = run_sentiment_pipeline(db, symbol_id=1, symbol="BTCUSDT")
+        assert result["fetched"] == 0
+        assert result["fetch_status"] == "no_api_key"
+        assert "NEWSAPI_KEY" in result["fetch_detail"]
+
+    @patch("app.services.sentiment.pipeline.fetch_news_with_status")
     def test_pipeline_no_articles(self, mock_fetch):
-        mock_fetch.return_value = []
+        from app.services.sentiment.news_fetcher import FetchOutcome, FetchStatus
+
+        mock_fetch.return_value = FetchOutcome(
+            status=FetchStatus.NO_ARTICLES,
+            detail="No articles found.",
+        )
         db = MagicMock()
 
         from app.services.sentiment.pipeline import run_sentiment_pipeline
@@ -186,27 +311,35 @@ class TestSentimentPipeline:
         assert result["fetched"] == 0
         assert result["new"] == 0
         assert result["skipped"] == 0
+        assert result["fetch_status"] == "no_articles"
 
     @patch("app.services.sentiment.pipeline.score_text")
-    @patch("app.services.sentiment.pipeline.fetch_news")
+    @patch("app.services.sentiment.pipeline.fetch_news_with_status")
     def test_pipeline_stores_new_articles(self, mock_fetch, mock_score):
-        from app.services.sentiment.news_fetcher import NewsArticle
+        from app.services.sentiment.news_fetcher import (
+            FetchOutcome,
+            FetchStatus,
+            NewsArticle,
+        )
         from app.services.sentiment.scorer import SentimentResult
 
-        mock_fetch.return_value = [
-            NewsArticle(
-                title="BTC goes up",
-                url="https://example.com/1",
-                source="TestSource",
-                published_at=datetime(2026, 5, 10, tzinfo=timezone.utc),
-            ),
-            NewsArticle(
-                title="ETH goes down",
-                url="https://example.com/2",
-                source="TestSource",
-                published_at=datetime(2026, 5, 10, tzinfo=timezone.utc),
-            ),
-        ]
+        mock_fetch.return_value = FetchOutcome(
+            status=FetchStatus.OK,
+            articles=[
+                NewsArticle(
+                    title="BTC goes up",
+                    url="https://example.com/1",
+                    source="TestSource",
+                    published_at=datetime(2026, 5, 10, tzinfo=timezone.utc),
+                ),
+                NewsArticle(
+                    title="ETH goes down",
+                    url="https://example.com/2",
+                    source="TestSource",
+                    published_at=datetime(2026, 5, 10, tzinfo=timezone.utc),
+                ),
+            ],
+        )
         mock_score.side_effect = [
             SentimentResult(score=0.6, label="positive"),
             SentimentResult(score=-0.3, label="negative"),
@@ -221,29 +354,37 @@ class TestSentimentPipeline:
         assert result["fetched"] == 2
         assert result["new"] == 2
         assert result["skipped"] == 0
+        assert result["fetch_status"] == "ok"
         assert db.add.call_count == 2
         db.commit.assert_called_once()
 
     @patch("app.services.sentiment.pipeline.score_text")
-    @patch("app.services.sentiment.pipeline.fetch_news")
+    @patch("app.services.sentiment.pipeline.fetch_news_with_status")
     def test_pipeline_deduplicates(self, mock_fetch, mock_score):
-        from app.services.sentiment.news_fetcher import NewsArticle
+        from app.services.sentiment.news_fetcher import (
+            FetchOutcome,
+            FetchStatus,
+            NewsArticle,
+        )
         from app.services.sentiment.scorer import SentimentResult
 
-        mock_fetch.return_value = [
-            NewsArticle(
-                title="Already exists",
-                url="https://example.com/dup",
-                source="TestSource",
-                published_at=datetime(2026, 5, 10, tzinfo=timezone.utc),
-            ),
-            NewsArticle(
-                title="Brand new",
-                url="https://example.com/new",
-                source="TestSource",
-                published_at=datetime(2026, 5, 10, tzinfo=timezone.utc),
-            ),
-        ]
+        mock_fetch.return_value = FetchOutcome(
+            status=FetchStatus.OK,
+            articles=[
+                NewsArticle(
+                    title="Already exists",
+                    url="https://example.com/dup",
+                    source="TestSource",
+                    published_at=datetime(2026, 5, 10, tzinfo=timezone.utc),
+                ),
+                NewsArticle(
+                    title="Brand new",
+                    url="https://example.com/new",
+                    source="TestSource",
+                    published_at=datetime(2026, 5, 10, tzinfo=timezone.utc),
+                ),
+            ],
+        )
         mock_score.return_value = SentimentResult(score=0.5, label="positive")
 
         db = MagicMock()
@@ -271,7 +412,13 @@ class TestSentimentTasks:
         mock_session_cls.return_value = mock_db
 
         with patch("app.services.sentiment.pipeline.run_sentiment_pipeline") as mock_pipeline:
-            mock_pipeline.return_value = {"fetched": 10, "new": 5, "skipped": 5}
+            mock_pipeline.return_value = {
+                "fetched": 10,
+                "new": 5,
+                "skipped": 5,
+                "fetch_status": "ok",
+                "fetch_detail": "",
+            }
 
             from app.tasks.sentiment import fetch_sentiment_task
 
@@ -280,6 +427,7 @@ class TestSentimentTasks:
         assert result["status"] == "ok"
         assert result["fetched"] == 10
         assert result["new"] == 5
+        assert result["fetch_status"] == "ok"
         mock_db.close.assert_called_once()
 
     @patch("app.tasks.sentiment.SessionLocal")
@@ -334,3 +482,21 @@ class TestSentimentModel:
         from app.schemas.sentiment import SentimentScoreOut
 
         assert SentimentScoreOut.model_config.get("from_attributes") is True
+
+    def test_status_response_schema(self):
+        from app.schemas.sentiment import SentimentStatusItem, SentimentStatusResponse
+
+        resp = SentimentStatusResponse(
+            newsapi_key_set=True,
+            symbols=[
+                SentimentStatusItem(
+                    symbol="BTCUSD",
+                    symbol_id=1,
+                    total_scores=42,
+                    newest_published_at="2026-05-10T12:00:00Z",
+                    oldest_published_at="2026-05-01T06:00:00Z",
+                ),
+            ],
+        )
+        assert resp.newsapi_key_set is True
+        assert resp.symbols[0].total_scores == 42

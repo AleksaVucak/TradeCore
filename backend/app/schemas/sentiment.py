@@ -1,4 +1,4 @@
-"""Pydantic schemas for sentiment scores (Phase 17.1 + 17.2)."""
+"""Pydantic schemas for sentiment scores (Phase 17.1 + 17.2 + 17.5)."""
 
 from datetime import datetime
 
@@ -55,3 +55,24 @@ class SentimentRefreshResponse(BaseModel):
 
     status: str
     task_id: str
+
+
+# ---------------------------------------------------------------------------
+# Phase 17.5 — status endpoint
+# ---------------------------------------------------------------------------
+
+class SentimentStatusItem(BaseModel):
+    """Per-symbol status summary returned by the status endpoint."""
+
+    symbol: str
+    symbol_id: int
+    total_scores: int
+    newest_published_at: datetime | None = None
+    oldest_published_at: datetime | None = None
+
+
+class SentimentStatusResponse(BaseModel):
+    """Overall sentiment pipeline health / status."""
+
+    newsapi_key_set: bool
+    symbols: list[SentimentStatusItem]

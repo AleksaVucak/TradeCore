@@ -321,6 +321,45 @@ class TestTriggerSentimentRefresh:
 
 
 # ---------------------------------------------------------------------------
+# GET /api/v1/sentiment/status tests (Phase 17.5)
+# ---------------------------------------------------------------------------
+
+class TestGetSentimentStatus:
+    def test_returns_status_with_symbols(
+        self, client: TestClient, db_session: Session, auth_headers: dict, test_user: User
+    ):
+        sym = _get_or_create_symbol(db_session, "BTCUSD", "BTC", "USD")
+        _seed_sentiment(db_session, sym.id, count=5)
+
+        resp = client.get("/api/v1/sentiment/status", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "newsapi_key_set" in data
+        assert isinstance(data["symbols"], list)
+        btc_item = next((s for s in data["symbols"] if s["symbol"] == "BTCUSD"), None)
+        assert btc_item is not None
+        assert btc_item["total_scores"] == 5
+        assert btc_item["newest_published_at"] is not None
+
+    def test_returns_empty_counts_for_new_symbol(
+        self, client: TestClient, db_session: Session, auth_headers: dict, test_user: User
+    ):
+        _get_or_create_symbol(db_session, "DOTUSDT", "DOT", "USDT")
+
+        resp = client.get("/api/v1/sentiment/status", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        dot_item = next((s for s in data["symbols"] if s["symbol"] == "DOTUSDT"), None)
+        assert dot_item is not None
+        assert dot_item["total_scores"] == 0
+        assert dot_item["newest_published_at"] is None
+
+    def test_requires_auth(self, client: TestClient):
+        resp = client.get("/api/v1/sentiment/status")
+        assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
 # Schema tests
 # ---------------------------------------------------------------------------
 
@@ -352,3 +391,14 @@ class TestSentimentSchemas:
         )
         assert agg.total == 10
         assert agg.overall_label == "positive"
+
+    def test_status_item_schema(self):
+        from app.schemas.sentiment import SentimentStatusItem
+
+        item = SentimentStatusItem(
+            symbol="BTCUSD",
+            symbol_id=1,
+            total_scores=0,
+        )
+        assert item.newest_published_at is None
+        assert item.total_scores == 0
