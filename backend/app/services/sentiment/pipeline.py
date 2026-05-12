@@ -1,14 +1,19 @@
-"""End-to-end sentiment pipeline: fetch → score → store (Phase 17.1 + 17.5).
+"""End-to-end sentiment pipeline: fetch → score → store (Phase 17.1 + 17.5 + 17.6).
 
 Orchestrates the full flow for a single symbol:
 1. Fetch recent news headlines via NewsAPI.
 2. Score each headline with VADER.
-3. De-duplicate against existing DB rows (by headline + symbol + published_at).
+3. De-duplicate against existing DB rows using *both* headline text **and**
+   article URL (Phase 17.6 tightening).
 4. Persist new SentimentScore rows.
 
-Phase 17.5 — the result dict now includes a ``fetch_status`` and
-``fetch_detail`` field so callers (Celery task, API) can propagate
-meaningful failure reasons to the frontend.
+Phase 17.6 dedup improvements:
+- The in-memory set now contains ``(headline, url)`` tuples instead of
+  headline-only strings.  This prevents two different articles with
+  identical titles (common with wire-service re-posts) from being treated
+  as duplicates, while still catching true duplicates from the same source.
+- A URL-only check prevents the same article URL from being stored twice
+  even if the title changed slightly between fetches.
 """
 
 from __future__ import annotations
@@ -67,21 +72,29 @@ def run_sentiment_pipeline(
 
     articles = outcome.articles
 
-    existing_headlines = set(
-        row[0]
-        for row in db.query(SentimentScore.headline)
+    # Phase 17.6 — dual-key dedup: headline *and* URL
+    cutoff = now - timedelta(days=lookback_days)
+    existing_rows = (
+        db.query(SentimentScore.headline, SentimentScore.url)
         .filter(
             SentimentScore.symbol_id == symbol_id,
-            SentimentScore.published_at >= now - timedelta(days=lookback_days),
+            SentimentScore.published_at >= cutoff,
         )
         .all()
     )
+    existing_headlines: set[str] = {r[0] for r in existing_rows}
+    existing_urls: set[str] = {r[1] for r in existing_rows if r[1]}
 
     new_count = 0
     skipped = 0
 
     for article in articles:
-        if article.title in existing_headlines:
+        url = article.url or None
+
+        headline_dup = article.title in existing_headlines
+        url_dup = bool(url and url in existing_urls)
+
+        if headline_dup or url_dup:
             skipped += 1
             continue
 
@@ -91,13 +104,15 @@ def run_sentiment_pipeline(
             symbol_id=symbol_id,
             source=article.source,
             headline=article.title,
-            url=article.url or None,
+            url=url,
             published_at=article.published_at,
             score=result.score,
             label=result.label,
         )
         db.add(row)
         existing_headlines.add(article.title)
+        if url:
+            existing_urls.add(url)
         new_count += 1
 
     db.commit()

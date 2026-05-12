@@ -1,18 +1,21 @@
-"""News headline fetcher using NewsAPI (Phase 17.1 + 17.5).
+"""News headline fetcher using NewsAPI (Phase 17.1 + 17.5 + 17.6).
 
 Fetches recent English-language news articles for a given query term
 (typically a crypto symbol like "Bitcoin" or "Ethereum") and returns
 a list of structured article dicts ready for sentiment scoring.
 
-Phase 17.5 improvements:
-- Structured ``FetchOutcome`` return type so callers know *why* a fetch
-  returned zero articles (missing key, invalid key, rate-limited, network
-  error, or genuinely no articles).
-- Expanded ``SYMBOL_QUERY_MAP`` covering common crypto pairs.
+Phase 17.6 improvements:
+- ``build_query_for_symbol`` auto-derives a search query for *any* symbol
+  by stripping common quote suffixes (USDT, USD, BUSD, EUR) and looking up
+  the base asset in ``BASE_ASSET_QUERY_MAP``.  Unknown assets fall back to
+  ``"<base> crypto"`` which still yields reasonable results.
+- Post-fetch noise filter removes articles whose title is pure promotional
+  spam, very short, or consists only of tickers / numbers.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -26,22 +29,45 @@ logger = get_logger(__name__)
 
 NEWSAPI_EVERYTHING_URL = "https://newsapi.org/v2/everything"
 
-SYMBOL_QUERY_MAP: dict[str, str] = {
-    "BTCUSDT": "Bitcoin OR BTC",
-    "BTCUSD": "Bitcoin OR BTC",
-    "ETHUSDT": "Ethereum OR ETH",
-    "ETHUSD": "Ethereum OR ETH",
-    "SOLUSDT": "Solana OR SOL crypto",
-    "SOLUSD": "Solana OR SOL crypto",
-    "XRPUSDT": "Ripple OR XRP",
-    "XRPUSD": "Ripple OR XRP",
-    "ADAUSDT": "Cardano OR ADA crypto",
-    "ADAUSD": "Cardano OR ADA crypto",
-    "DOGEUSDT": "Dogecoin OR DOGE",
-    "DOGEUSD": "Dogecoin OR DOGE",
-    "BNBUSDT": "Binance Coin OR BNB crypto",
-    "BNBUSD": "Binance Coin OR BNB crypto",
+# ---------------------------------------------------------------------------
+# Phase 17.6 — base-asset → search query mapping
+# ---------------------------------------------------------------------------
+
+BASE_ASSET_QUERY_MAP: dict[str, str] = {
+    "BTC": "Bitcoin OR BTC",
+    "ETH": "Ethereum OR ETH",
+    "SOL": "Solana OR SOL crypto",
+    "XRP": "Ripple OR XRP",
+    "ADA": "Cardano OR ADA crypto",
+    "DOGE": "Dogecoin OR DOGE",
+    "BNB": "Binance Coin OR BNB crypto",
+    "DOT": "Polkadot OR DOT crypto",
+    "AVAX": "Avalanche OR AVAX crypto",
+    "MATIC": "Polygon OR MATIC crypto",
+    "POL": "Polygon OR POL crypto",
+    "LINK": "Chainlink OR LINK crypto",
+    "LTC": "Litecoin OR LTC",
+    "UNI": "Uniswap OR UNI crypto",
+    "ATOM": "Cosmos OR ATOM crypto",
+    "NEAR": "NEAR Protocol crypto",
+    "APT": "Aptos OR APT crypto",
+    "ARB": "Arbitrum OR ARB crypto",
+    "OP": "Optimism OR OP crypto",
+    "SUI": "SUI crypto blockchain",
+    "FIL": "Filecoin OR FIL crypto",
+    "SHIB": "Shiba Inu OR SHIB",
+    "PEPE": "PEPE memecoin crypto",
+    "TRX": "TRON OR TRX crypto",
 }
+
+_QUOTE_SUFFIXES = ("USDT", "BUSD", "USDC", "USD", "EUR", "GBP", "BTC", "ETH")
+
+_NOISE_RE = re.compile(
+    r"^[\d\s\W]+$"
+    r"|^.{0,15}$"
+    r"|sponsored|presale hits|buy now|limited offer|act fast",
+    re.IGNORECASE,
+)
 
 DEFAULT_PAGE_SIZE = 50
 
@@ -88,6 +114,30 @@ def _parse_published(raw: str | None) -> datetime:
         return datetime.now(timezone.utc)
 
 
+def _extract_base_asset(symbol: str) -> str:
+    """Strip common quote-currency suffixes to isolate the base asset."""
+    upper = symbol.upper()
+    for suffix in _QUOTE_SUFFIXES:
+        if upper.endswith(suffix) and len(upper) > len(suffix):
+            return upper[: -len(suffix)]
+    return upper
+
+
+def build_query_for_symbol(symbol: str) -> str:
+    """Derive a NewsAPI search query from a trading-pair symbol.
+
+    Tries ``BASE_ASSET_QUERY_MAP`` first.  Falls back to
+    ``"<base> crypto"`` which is generic but still crypto-scoped.
+    """
+    base = _extract_base_asset(symbol)
+    return BASE_ASSET_QUERY_MAP.get(base, f"{base} crypto")
+
+
+def _is_noise(title: str) -> bool:
+    """Return True if a headline is too short, purely numeric, or spammy."""
+    return bool(_NOISE_RE.search(title))
+
+
 def fetch_news(
     symbol: str,
     *,
@@ -114,11 +164,7 @@ def fetch_news_with_status(
     from_date: str | None = None,
     to_date: str | None = None,
 ) -> FetchOutcome:
-    """Fetch news and return a :class:`FetchOutcome` with a machine-readable status.
-
-    This is the preferred entry point from Phase 17.5 onward because callers
-    can inspect ``outcome.status`` and ``outcome.detail`` for diagnostics.
-    """
+    """Fetch news and return a :class:`FetchOutcome` with a machine-readable status."""
     api_key = settings.newsapi_key
     if not api_key:
         logger.warning(
@@ -130,7 +176,7 @@ def fetch_news_with_status(
             detail="NEWSAPI_KEY is not configured. Set it in your project root .env file.",
         )
 
-    query = SYMBOL_QUERY_MAP.get(symbol.upper(), symbol)
+    query = build_query_for_symbol(symbol)
 
     params: dict[str, str | int] = {
         "q": query,
@@ -178,10 +224,14 @@ def fetch_news_with_status(
         )
 
     articles_raw = data.get("articles") or []
+    noise_filtered = 0
     articles: list[NewsArticle] = []
     for art in articles_raw:
         title = (art.get("title") or "").strip()
         if not title or title == "[Removed]":
+            continue
+        if _is_noise(title):
+            noise_filtered += 1
             continue
         articles.append(
             NewsArticle(
@@ -192,6 +242,14 @@ def fetch_news_with_status(
             )
         )
 
+    if noise_filtered:
+        logger.info(
+            "newsapi_noise_filtered",
+            symbol=symbol,
+            query=query,
+            noise_filtered=noise_filtered,
+        )
+
     if not articles:
         logger.info(
             "newsapi_no_articles_returned",
@@ -200,7 +258,10 @@ def fetch_news_with_status(
         )
         return FetchOutcome(
             status=FetchStatus.NO_ARTICLES,
-            detail=f"NewsAPI returned no articles for query '{query}'. Try a different symbol or check your date range.",
+            detail=(
+                f"NewsAPI returned no usable articles for query '{query}' "
+                f"(symbol: {symbol}). Check your date range or try a different symbol."
+            ),
         )
 
     return FetchOutcome(status=FetchStatus.OK, articles=articles)

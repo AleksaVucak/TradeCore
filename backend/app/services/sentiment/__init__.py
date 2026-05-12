@@ -7,6 +7,7 @@ from app.services.sentiment.filter import (
 from app.services.sentiment.news_fetcher import (
     FetchOutcome,
     FetchStatus,
+    build_query_for_symbol,
     fetch_news,
     fetch_news_with_status,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "score_texts",
     "fetch_news",
     "fetch_news_with_status",
+    "build_query_for_symbol",
     "FetchOutcome",
     "FetchStatus",
     "run_sentiment_pipeline",

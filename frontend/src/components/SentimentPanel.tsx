@@ -1,15 +1,14 @@
 "use client";
 
 /**
- * Phase 17.4 + 17.5 — reusable sentiment display component.
+ * Phase 17.4 + 17.5 + 17.6 — reusable sentiment display component.
  *
- * Shows aggregate sentiment statistics and the most recent scored headlines
- * for a single symbol. Phase 17.5 improvements:
- * - Uses synchronous refresh (``?async=false``) so immediate diagnostics
- *   (fetch_status, fetch_detail, new-article count) are shown inline.
- * - Actionable empty-state messages distinguish "no key", "rate limited",
- *   "no articles for query" vs. "data exists but outside the date range".
- * - Auto-reloads data after a successful sync refresh.
+ * Phase 17.6 improvements:
+ * - "Showing X of Y" counter above the headlines table.
+ * - Date-window-aware empty state: when start/end are provided (run page)
+ *   and zero results come back, the message explains that the pipeline's
+ *   lookback window may not cover the backtest date range instead of the
+ *   generic "set your API key" instructions.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -87,7 +86,8 @@ export function SentimentPanel({
   const [refreshing, setRefreshing] = useState(false);
   const [refreshNotice, setRefreshNotice] = useState<string | null>(null);
 
-  // Reset pagination whenever query context changes.
+  const isDateFiltered = Boolean(start || end);
+
   useEffect(() => {
     setVisibleLimit(limit);
   }, [limit, symbol, start, end]);
@@ -202,12 +202,14 @@ export function SentimentPanel({
   const aggregateBadgeClass = aggregate
     ? labelClass(aggregate.overall_label)
     : LABEL_COLOR.neutral;
+
+  const totalAvailable = aggregate?.total ?? 0;
   const canLoadMore =
     !loading &&
     !error &&
     showList &&
     scores.length > 0 &&
-    (aggregate ? scores.length < aggregate.total : scores.length >= visibleLimit);
+    (aggregate ? scores.length < totalAvailable : scores.length >= visibleLimit);
 
   return (
     <Card>
@@ -308,36 +310,76 @@ export function SentimentPanel({
           <div>
             {scores.length === 0 ? (
               <div className="rounded-lg border border-dashed bg-muted/20 p-4 text-sm text-muted-foreground space-y-2">
-                <p>
-                  No sentiment data yet for <strong>{symbol}</strong>.
-                </p>
-                <ol className="list-decimal list-inside space-y-1 text-xs">
-                  <li>
-                    Set <code className="font-mono">NEWSAPI_KEY</code> in your
-                    project root <code className="font-mono">.env</code> file
-                    (free at{" "}
-                    <a
-                      href="https://newsapi.org/register"
-                      target="_blank"
-                      rel="noreferrer noopener"
-                      className="text-primary underline-offset-4 hover:underline"
-                    >
-                      newsapi.org
-                    </a>
-                    ).
-                  </li>
-                  <li>
-                    Restart the stack:{" "}
-                    <code className="font-mono">docker compose up --build</code>
-                  </li>
-                  <li>
-                    Click <span className="font-medium">Refresh news</span>{" "}
-                    above. Results appear in seconds.
-                  </li>
-                </ol>
+                {isDateFiltered ? (
+                  <>
+                    <p>
+                      No sentiment data for <strong>{symbol}</strong> in the
+                      selected date range.
+                    </p>
+                    <p className="text-xs">
+                      The sentiment pipeline only stores headlines from the last
+                      7 days by default. If this backtest covers an older window,
+                      no matching headlines will exist. Run a refresh on the{" "}
+                      <strong>Market Data</strong> page to populate recent data,
+                      or re-run the backtest over a more recent period.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p>
+                      No sentiment data yet for <strong>{symbol}</strong>.
+                    </p>
+                    <ol className="list-decimal list-inside space-y-1 text-xs">
+                      <li>
+                        Set <code className="font-mono">NEWSAPI_KEY</code> in
+                        your project root{" "}
+                        <code className="font-mono">.env</code> file (free at{" "}
+                        <a
+                          href="https://newsapi.org/register"
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="text-primary underline-offset-4 hover:underline"
+                        >
+                          newsapi.org
+                        </a>
+                        ).
+                      </li>
+                      <li>
+                        Restart the stack:{" "}
+                        <code className="font-mono">
+                          docker compose up --build
+                        </code>
+                      </li>
+                      <li>
+                        Click{" "}
+                        <span className="font-medium">Refresh news</span> above.
+                        Results appear in seconds.
+                      </li>
+                    </ol>
+                  </>
+                )}
               </div>
             ) : (
               <div className="space-y-3">
+                {/* Phase 17.6 — "Showing X of Y" counter */}
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>
+                    Showing{" "}
+                    <span className="font-medium tabular-nums text-foreground">
+                      {scores.length}
+                    </span>
+                    {totalAvailable > 0 && (
+                      <>
+                        {" "}
+                        of{" "}
+                        <span className="font-medium tabular-nums text-foreground">
+                          {totalAvailable}
+                        </span>
+                      </>
+                    )}{" "}
+                    headline{scores.length === 1 ? "" : "s"}
+                  </span>
+                </div>
                 <div className="overflow-hidden rounded-lg border">
                   <table className="w-full text-sm">
                     <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
@@ -348,7 +390,9 @@ export function SentimentPanel({
                         <th className="text-left font-medium px-3 py-2 hidden sm:table-cell">
                           Source
                         </th>
-                        <th className="text-left font-medium px-3 py-2">Label</th>
+                        <th className="text-left font-medium px-3 py-2">
+                          Label
+                        </th>
                         <th className="text-right font-medium px-3 py-2">
                           Score
                         </th>
@@ -375,7 +419,10 @@ export function SentimentPanel({
                                 {row.headline}
                               </a>
                             ) : (
-                              <span className="line-clamp-2" title={row.headline}>
+                              <span
+                                className="line-clamp-2"
+                                title={row.headline}
+                              >
                                 {row.headline}
                               </span>
                             )}

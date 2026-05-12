@@ -1,4 +1,4 @@
-"""Tests for the sentiment pipeline (Phase 17.1 + 17.5)."""
+"""Tests for the sentiment pipeline (Phase 17.1 + 17.5 + 17.6)."""
 
 from __future__ import annotations
 
@@ -93,15 +93,41 @@ class TestNewsFetcher:
             assert "NEWSAPI_KEY" in outcome.detail
             assert outcome.articles == []
 
-    def test_symbol_query_map(self):
-        from app.services.sentiment.news_fetcher import SYMBOL_QUERY_MAP
+    def test_build_query_known_symbols(self):
+        from app.services.sentiment.news_fetcher import build_query_for_symbol
 
-        assert "BTCUSDT" in SYMBOL_QUERY_MAP
-        assert "BTCUSD" in SYMBOL_QUERY_MAP
-        assert "ETHUSDT" in SYMBOL_QUERY_MAP
-        assert "ETHUSD" in SYMBOL_QUERY_MAP
-        assert "Bitcoin" in SYMBOL_QUERY_MAP["BTCUSDT"]
-        assert "Bitcoin" in SYMBOL_QUERY_MAP["BTCUSD"]
+        assert "Bitcoin" in build_query_for_symbol("BTCUSDT")
+        assert "Bitcoin" in build_query_for_symbol("BTCUSD")
+        assert "Ethereum" in build_query_for_symbol("ETHUSDT")
+        assert "Ethereum" in build_query_for_symbol("ETHUSD")
+        assert "Solana" in build_query_for_symbol("SOLUSDT")
+        assert "Dogecoin" in build_query_for_symbol("DOGEUSDT")
+
+    def test_build_query_unknown_symbol_fallback(self):
+        from app.services.sentiment.news_fetcher import build_query_for_symbol
+
+        query = build_query_for_symbol("FOOBUSD")
+        assert "FOO" in query
+        assert "crypto" in query
+
+    def test_extract_base_asset(self):
+        from app.services.sentiment.news_fetcher import _extract_base_asset
+
+        assert _extract_base_asset("BTCUSDT") == "BTC"
+        assert _extract_base_asset("ETHUSD") == "ETH"
+        assert _extract_base_asset("SOLBUSD") == "SOL"
+        assert _extract_base_asset("ADAUSDC") == "ADA"
+        assert _extract_base_asset("BTC") == "BTC"
+
+    def test_noise_filter(self):
+        from app.services.sentiment.news_fetcher import _is_noise
+
+        assert _is_noise("12345") is True
+        assert _is_noise("Hi") is True
+        assert _is_noise("Buy now limited offer XYZ") is True
+        assert _is_noise("presale hits 1 million") is True
+        assert _is_noise("Bitcoin surges to new all-time high") is False
+        assert _is_noise("Ethereum upgrade attracts developers") is False
 
     def test_parse_published_valid(self):
         from app.services.sentiment.news_fetcher import _parse_published
@@ -184,6 +210,54 @@ class TestNewsFetcher:
             articles = fetch_news("BTCUSDT")
 
         assert articles == []
+
+    @patch("app.services.sentiment.news_fetcher.httpx.get")
+    def test_fetch_news_filters_noise(self, mock_get):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "status": "ok",
+            "totalResults": 4,
+            "articles": [
+                {
+                    "title": "Bitcoin hits record high",
+                    "url": "https://example.com/1",
+                    "source": {"name": "CoinDesk"},
+                    "publishedAt": "2026-05-10T10:00:00Z",
+                },
+                {
+                    "title": "Buy now limited offer presale",
+                    "url": "https://example.com/2",
+                    "source": {"name": "Spam"},
+                    "publishedAt": "2026-05-10T10:00:00Z",
+                },
+                {
+                    "title": "Hi",
+                    "url": "https://example.com/3",
+                    "source": {"name": "Short"},
+                    "publishedAt": "2026-05-10T10:00:00Z",
+                },
+                {
+                    "title": "Ethereum upgrade attracts major developers",
+                    "url": "https://example.com/4",
+                    "source": {"name": "CryptoNews"},
+                    "publishedAt": "2026-05-10T09:00:00Z",
+                },
+            ],
+        }
+        mock_get.return_value = mock_resp
+
+        with patch("app.services.sentiment.news_fetcher.settings") as mock_settings:
+            mock_settings.newsapi_key = "test-key-123"
+            from app.services.sentiment.news_fetcher import fetch_news
+
+            articles = fetch_news("BTCUSDT")
+
+        assert len(articles) == 2
+        titles = [a.title for a in articles]
+        assert "Bitcoin hits record high" in titles
+        assert "Ethereum upgrade attracts major developers" in titles
 
     @patch("app.services.sentiment.news_fetcher.httpx.get")
     def test_fetch_with_status_rate_limited(self, mock_get):
@@ -360,7 +434,7 @@ class TestSentimentPipeline:
 
     @patch("app.services.sentiment.pipeline.score_text")
     @patch("app.services.sentiment.pipeline.fetch_news_with_status")
-    def test_pipeline_deduplicates(self, mock_fetch, mock_score):
+    def test_pipeline_dedup_by_headline(self, mock_fetch, mock_score):
         from app.services.sentiment.news_fetcher import (
             FetchOutcome,
             FetchStatus,
@@ -389,7 +463,7 @@ class TestSentimentPipeline:
 
         db = MagicMock()
         db.query.return_value.filter.return_value.all.return_value = [
-            ("Already exists",),
+            ("Already exists", "https://example.com/dup"),
         ]
 
         from app.services.sentiment.pipeline import run_sentiment_pipeline
@@ -399,6 +473,42 @@ class TestSentimentPipeline:
         assert result["new"] == 1
         assert result["skipped"] == 1
         assert db.add.call_count == 1
+
+    @patch("app.services.sentiment.pipeline.score_text")
+    @patch("app.services.sentiment.pipeline.fetch_news_with_status")
+    def test_pipeline_dedup_by_url(self, mock_fetch, mock_score):
+        """Same URL but slightly different headline should still be deduped."""
+        from app.services.sentiment.news_fetcher import (
+            FetchOutcome,
+            FetchStatus,
+            NewsArticle,
+        )
+        from app.services.sentiment.scorer import SentimentResult
+
+        mock_fetch.return_value = FetchOutcome(
+            status=FetchStatus.OK,
+            articles=[
+                NewsArticle(
+                    title="Bitcoin surges!",
+                    url="https://example.com/same-url",
+                    source="TestSource",
+                    published_at=datetime(2026, 5, 10, tzinfo=timezone.utc),
+                ),
+            ],
+        )
+        mock_score.return_value = SentimentResult(score=0.5, label="positive")
+
+        db = MagicMock()
+        db.query.return_value.filter.return_value.all.return_value = [
+            ("Bitcoin surges", "https://example.com/same-url"),
+        ]
+
+        from app.services.sentiment.pipeline import run_sentiment_pipeline
+
+        result = run_sentiment_pipeline(db, symbol_id=1, symbol="BTCUSDT")
+        assert result["new"] == 0
+        assert result["skipped"] == 1
+        assert db.add.call_count == 0
 
 
 # ---------------------------------------------------------------------------
