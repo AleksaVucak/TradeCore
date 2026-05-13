@@ -8,6 +8,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   backtestsApi,
@@ -93,6 +94,7 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 const POLL_INTERVAL_MS = 2500;
+const TRADES_PAGE_SIZE = 10;
 const isTerminalStatus = (s: string) => s === "completed" || s === "failed";
 
 export function RunDetailClient({ runId }: { runId: string }) {
@@ -101,6 +103,8 @@ export function RunDetailClient({ runId }: { runId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [benchmark, setBenchmark] = useState<BenchmarkResponse | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastTradesLenRef = useRef<number | null>(null);
+  const [tradesPage, setTradesPage] = useState(1);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -120,11 +124,14 @@ export function RunDetailClient({ runId }: { runId: string }) {
     }
 
     let cancelled = false;
+    lastTradesLenRef.current = null;
 
     backtestsApi
       .get(token, runId)
       .then((data) => {
         if (cancelled) return;
+        lastTradesLenRef.current = data.trades?.length ?? 0;
+        setTradesPage(1);
         setRun(data);
         setError(null);
 
@@ -134,6 +141,14 @@ export function RunDetailClient({ runId }: { runId: string }) {
             try {
               const latest = await backtestsApi.get(token, runId);
               if (cancelled) return;
+              const len = latest.trades?.length ?? 0;
+              if (
+                lastTradesLenRef.current !== null &&
+                lastTradesLenRef.current !== len
+              ) {
+                setTradesPage(1);
+              }
+              lastTradesLenRef.current = len;
               setRun(latest);
               if (isTerminalStatus(latest.status)) {
                 stopPolling();
@@ -147,6 +162,8 @@ export function RunDetailClient({ runId }: { runId: string }) {
       .catch((err) => {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Failed to load run");
+          lastTradesLenRef.current = null;
+          setTradesPage(1);
           setRun(null);
         }
       })
@@ -346,6 +363,29 @@ export function RunDetailClient({ runId }: { runId: string }) {
       price: t.price,
     }));
   }, [trades]);
+
+  const tradesTotal = trades?.length ?? 0;
+  const tradesTotalPages = Math.max(
+    1,
+    Math.ceil(tradesTotal / TRADES_PAGE_SIZE),
+  );
+  const tradesPageSafe = Math.min(
+    Math.max(1, tradesPage),
+    tradesTotalPages,
+  );
+  const pagedTrades = useMemo(() => {
+    if (!trades || trades.length === 0) return [];
+    const start = (tradesPageSafe - 1) * TRADES_PAGE_SIZE;
+    return trades.slice(start, start + TRADES_PAGE_SIZE);
+  }, [trades, tradesPageSafe]);
+  const tradesRangeStart =
+    tradesTotal === 0 ? 0 : (tradesPageSafe - 1) * TRADES_PAGE_SIZE + 1;
+  const tradesRangeEnd =
+    tradesTotal === 0
+      ? 0
+      : (tradesPageSafe - 1) * TRADES_PAGE_SIZE + pagedTrades.length;
+  const tradesHasPrev = tradesPageSafe > 1;
+  const tradesHasNext = tradesPageSafe < tradesTotalPages;
 
   if (loading) {
     return (
@@ -1052,13 +1092,17 @@ export function RunDetailClient({ runId }: { runId: string }) {
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Trades</CardTitle>
           <CardDescription>
-            {run.trades.length === 0
+            {tradesTotal === 0
               ? "No trades for this run."
-              : `${run.trades.length} trade${run.trades.length !== 1 ? "s" : ""}.`}
+              : `${tradesTotal} trade${tradesTotal !== 1 ? "s" : ""}${
+                  tradesTotal > TRADES_PAGE_SIZE
+                    ? ` · Showing ${tradesRangeStart}–${tradesRangeEnd}`
+                    : ""
+                }.`}
           </CardDescription>
         </CardHeader>
-        {run.trades.length > 0 ? (
-          <CardContent className="overflow-x-auto">
+        {tradesTotal > 0 ? (
+          <CardContent className="overflow-x-auto space-y-4">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border">
@@ -1086,7 +1130,7 @@ export function RunDetailClient({ runId }: { runId: string }) {
                 </tr>
               </thead>
               <tbody>
-                {run.trades.map((trade) => (
+                {pagedTrades.map((trade) => (
                   <tr
                     key={trade.id}
                     className="border-b border-border/80 hover:bg-muted/50"
@@ -1127,6 +1171,47 @@ export function RunDetailClient({ runId }: { runId: string }) {
                 ))}
               </tbody>
             </table>
+            {(tradesHasPrev || tradesHasNext) && (
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={!tradesHasPrev}
+                  onClick={() =>
+                    setTradesPage((p) => {
+                      const s = Math.min(
+                        Math.max(1, p),
+                        tradesTotalPages,
+                      );
+                      return Math.max(1, s - 1);
+                    })
+                  }
+                >
+                  Previous
+                </Button>
+                <span className="text-xs text-muted-foreground tabular-nums">
+                  Page {tradesPageSafe} of {tradesTotalPages}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={!tradesHasNext}
+                  onClick={() =>
+                    setTradesPage((p) => {
+                      const s = Math.min(
+                        Math.max(1, p),
+                        tradesTotalPages,
+                      );
+                      return Math.min(tradesTotalPages, s + 1);
+                    })
+                  }
+                >
+                  Next
+                </Button>
+              </div>
+            )}
           </CardContent>
         ) : null}
       </Card>
