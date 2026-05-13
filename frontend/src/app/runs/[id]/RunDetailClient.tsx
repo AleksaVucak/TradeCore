@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Card,
   CardContent,
@@ -104,6 +104,8 @@ export function RunDetailClient({ runId }: { runId: string }) {
   const [benchmark, setBenchmark] = useState<BenchmarkResponse | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastTradesLenRef = useRef<number | null>(null);
+  const tradesSectionRef = useRef<HTMLDivElement>(null);
+  const prevTradesPageForScrollRef = useRef<number | null>(null);
   const [tradesPage, setTradesPage] = useState(1);
 
   const stopPolling = useCallback(() => {
@@ -125,6 +127,7 @@ export function RunDetailClient({ runId }: { runId: string }) {
 
     let cancelled = false;
     lastTradesLenRef.current = null;
+    prevTradesPageForScrollRef.current = null;
 
     backtestsApi
       .get(token, runId)
@@ -386,6 +389,19 @@ export function RunDetailClient({ runId }: { runId: string }) {
       : (tradesPageSafe - 1) * TRADES_PAGE_SIZE + pagedTrades.length;
   const tradesHasPrev = tradesPageSafe > 1;
   const tradesHasNext = tradesPageSafe < tradesTotalPages;
+
+  useLayoutEffect(() => {
+    if (loading) return;
+    if (tradesTotal === 0) return;
+    const prev = prevTradesPageForScrollRef.current;
+    prevTradesPageForScrollRef.current = tradesPageSafe;
+    if (prev === null) return;
+    if (prev === tradesPageSafe) return;
+    tradesSectionRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }, [loading, tradesTotal, tradesPageSafe]);
 
   if (loading) {
     return (
@@ -1088,7 +1104,7 @@ export function RunDetailClient({ runId }: { runId: string }) {
       )}
 
       {/* Trades table */}
-      <Card className="mt-6">
+      <Card ref={tradesSectionRef} className="mt-6">
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Trades</CardTitle>
           <CardDescription>
