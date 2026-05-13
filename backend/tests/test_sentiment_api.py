@@ -1,4 +1,4 @@
-"""API tests for sentiment endpoints (Phase 17.2).
+"""API tests for sentiment endpoints (Phase 17.2 + 17.7).
 
 Uses the transactional test fixtures from conftest.py so each test
 is isolated and rolled back automatically.
@@ -362,6 +362,39 @@ class TestGetSentimentStatus:
         assert dot_item["total_scores"] == 0
         assert dot_item["newest_published_at"] is None
 
+    def test_staleness_fields_present(
+        self, client: TestClient, db_session: Session, auth_headers: dict, test_user: User
+    ):
+        """Phase 17.7: status items should include staleness indicators."""
+        sym = _get_or_create_symbol(db_session, "BTCUSD", "BTC", "USD")
+        _seed_sentiment(db_session, sym.id, count=3)
+
+        resp = client.get("/api/v1/sentiment/status", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        btc_item = next((s for s in data["symbols"] if s["symbol"] == "BTCUSD"), None)
+        assert btc_item is not None
+        assert "last_refreshed_at" in btc_item
+        assert "data_age_hours" in btc_item
+        assert "is_stale" in btc_item
+        assert isinstance(btc_item["data_age_hours"], float)
+        assert isinstance(btc_item["is_stale"], bool)
+
+    def test_new_symbol_staleness_defaults(
+        self, client: TestClient, db_session: Session, auth_headers: dict, test_user: User
+    ):
+        """Phase 17.7: symbols with no data should have null age and is_stale=True."""
+        _get_or_create_symbol(db_session, "NEWCOIN", "NEW", "USDT")
+
+        resp = client.get("/api/v1/sentiment/status", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        item = next((s for s in data["symbols"] if s["symbol"] == "NEWCOIN"), None)
+        assert item is not None
+        assert item["data_age_hours"] is None
+        assert item["last_refreshed_at"] is None
+        assert item["is_stale"] is True
+
     def test_requires_auth(self, client: TestClient):
         resp = client.get("/api/v1/sentiment/status")
         assert resp.status_code == 401
@@ -410,3 +443,24 @@ class TestSentimentSchemas:
         )
         assert item.newest_published_at is None
         assert item.total_scores == 0
+        assert item.last_refreshed_at is None
+        assert item.data_age_hours is None
+        assert item.is_stale is False
+
+    def test_status_item_with_staleness(self):
+        """Phase 17.7: SentimentStatusItem with all staleness fields set."""
+        from app.schemas.sentiment import SentimentStatusItem
+
+        item = SentimentStatusItem(
+            symbol="ETHUSD",
+            symbol_id=2,
+            total_scores=50,
+            newest_published_at="2026-05-10T12:00:00Z",
+            oldest_published_at="2026-05-03T06:00:00Z",
+            last_refreshed_at="2026-05-10T13:00:00Z",
+            data_age_hours=12.5,
+            is_stale=False,
+        )
+        assert item.data_age_hours == 12.5
+        assert item.is_stale is False
+        assert item.last_refreshed_at is not None

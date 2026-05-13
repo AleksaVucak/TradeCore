@@ -1,4 +1,4 @@
-"""Tests for the sentiment pipeline (Phase 17.1 + 17.5 + 17.6)."""
+"""Tests for the sentiment pipeline (Phase 17.1–17.7)."""
 
 from __future__ import annotations
 
@@ -368,6 +368,8 @@ class TestSentimentPipeline:
         assert result["fetched"] == 0
         assert result["fetch_status"] == "no_api_key"
         assert "NEWSAPI_KEY" in result["fetch_detail"]
+        assert "duration_ms" in result
+        assert "correlation_id" in result
 
     @patch("app.services.sentiment.pipeline.fetch_news_with_status")
     def test_pipeline_no_articles(self, mock_fetch):
@@ -386,6 +388,8 @@ class TestSentimentPipeline:
         assert result["new"] == 0
         assert result["skipped"] == 0
         assert result["fetch_status"] == "no_articles"
+        assert "duration_ms" in result
+        assert "correlation_id" in result
 
     @patch("app.services.sentiment.pipeline.score_text")
     @patch("app.services.sentiment.pipeline.fetch_news_with_status")
@@ -429,8 +433,29 @@ class TestSentimentPipeline:
         assert result["new"] == 2
         assert result["skipped"] == 0
         assert result["fetch_status"] == "ok"
+        assert isinstance(result["duration_ms"], int)
+        assert isinstance(result["correlation_id"], str)
         assert db.add.call_count == 2
         db.commit.assert_called_once()
+
+    @patch("app.services.sentiment.pipeline.score_text")
+    @patch("app.services.sentiment.pipeline.fetch_news_with_status")
+    def test_pipeline_correlation_id_passthrough(self, mock_fetch, mock_score):
+        """When a caller provides a correlation_id, the pipeline uses it."""
+        from app.services.sentiment.news_fetcher import FetchOutcome, FetchStatus
+
+        mock_fetch.return_value = FetchOutcome(
+            status=FetchStatus.NO_ARTICLES,
+            detail="No articles.",
+        )
+        db = MagicMock()
+
+        from app.services.sentiment.pipeline import run_sentiment_pipeline
+
+        result = run_sentiment_pipeline(
+            db, symbol_id=1, symbol="BTCUSDT", correlation_id="test-cid-123"
+        )
+        assert result["correlation_id"] == "test-cid-123"
 
     @patch("app.services.sentiment.pipeline.score_text")
     @patch("app.services.sentiment.pipeline.fetch_news_with_status")
@@ -512,7 +537,7 @@ class TestSentimentPipeline:
 
 
 # ---------------------------------------------------------------------------
-# Celery task tests
+# Celery task tests (Phase 17.7 — retry logic, correlation IDs)
 # ---------------------------------------------------------------------------
 
 class TestSentimentTasks:
@@ -528,6 +553,8 @@ class TestSentimentTasks:
                 "skipped": 5,
                 "fetch_status": "ok",
                 "fetch_detail": "",
+                "duration_ms": 123,
+                "correlation_id": "abc123",
             }
 
             from app.tasks.sentiment import fetch_sentiment_task
@@ -538,10 +565,39 @@ class TestSentimentTasks:
         assert result["fetched"] == 10
         assert result["new"] == 5
         assert result["fetch_status"] == "ok"
+        assert result["duration_ms"] == 123
+        assert "correlation_id" in result
+        assert result["attempt"] == 1
         mock_db.close.assert_called_once()
 
     @patch("app.tasks.sentiment.SessionLocal")
-    def test_refresh_all_dispatches(self, mock_session_cls):
+    def test_fetch_task_no_retry_on_config_error(self, mock_session_cls):
+        """Config errors (no API key) should NOT trigger a retry."""
+        mock_db = MagicMock()
+        mock_session_cls.return_value = mock_db
+
+        with patch("app.services.sentiment.pipeline.run_sentiment_pipeline") as mock_pipeline:
+            mock_pipeline.return_value = {
+                "fetched": 0,
+                "new": 0,
+                "skipped": 0,
+                "fetch_status": "no_api_key",
+                "fetch_detail": "NEWSAPI_KEY is not configured.",
+                "duration_ms": 5,
+                "correlation_id": "cfg-err",
+            }
+
+            from app.tasks.sentiment import fetch_sentiment_task
+
+            result = fetch_sentiment_task(symbol_id=1, symbol="BTCUSDT")
+
+        assert result["status"] == "completed_with_issue"
+        assert result["fetch_status"] == "no_api_key"
+        mock_db.close.assert_called_once()
+
+    @patch("app.tasks.sentiment.SessionLocal")
+    def test_refresh_all_dispatches_with_countdown(self, mock_session_cls):
+        """refresh_all_sentiment_task should stagger dispatches."""
         from app.models.symbol import Symbol
 
         mock_db = MagicMock()
@@ -568,12 +624,18 @@ class TestSentimentTasks:
 
         assert result["status"] == "ok"
         assert result["dispatched"] == 2
+        assert "correlation_id" in result
         assert mock_fetch_task.apply_async.call_count == 2
+
+        calls = mock_fetch_task.apply_async.call_args_list
+        assert calls[0].kwargs.get("countdown") == 0
+        assert calls[1].kwargs.get("countdown") == 10
+
         mock_db.close.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
-# Model / schema tests
+# Model / schema tests (Phase 17.7 — staleness fields)
 # ---------------------------------------------------------------------------
 
 class TestSentimentModel:
@@ -610,3 +672,34 @@ class TestSentimentModel:
         )
         assert resp.newsapi_key_set is True
         assert resp.symbols[0].total_scores == 42
+
+    def test_status_item_staleness_fields(self):
+        """Phase 17.7: SentimentStatusItem should accept the new fields."""
+        from app.schemas.sentiment import SentimentStatusItem
+
+        item = SentimentStatusItem(
+            symbol="BTCUSD",
+            symbol_id=1,
+            total_scores=100,
+            newest_published_at="2026-05-10T12:00:00Z",
+            oldest_published_at="2026-05-01T06:00:00Z",
+            last_refreshed_at="2026-05-10T13:00:00Z",
+            data_age_hours=6.5,
+            is_stale=False,
+        )
+        assert item.last_refreshed_at is not None
+        assert item.data_age_hours == 6.5
+        assert item.is_stale is False
+
+    def test_status_item_defaults_to_stale(self):
+        """When no data exists, is_stale defaults to False (no data yet)."""
+        from app.schemas.sentiment import SentimentStatusItem
+
+        item = SentimentStatusItem(
+            symbol="NEWCOIN",
+            symbol_id=99,
+            total_scores=0,
+        )
+        assert item.last_refreshed_at is None
+        assert item.data_age_hours is None
+        assert item.is_stale is False

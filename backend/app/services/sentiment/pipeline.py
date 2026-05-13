@@ -1,4 +1,4 @@
-"""End-to-end sentiment pipeline: fetch → score → store (Phase 17.1 + 17.5 + 17.6).
+"""End-to-end sentiment pipeline: fetch → score → store (Phase 17.1–17.7).
 
 Orchestrates the full flow for a single symbol:
 1. Fetch recent news headlines via NewsAPI.
@@ -7,17 +7,18 @@ Orchestrates the full flow for a single symbol:
    article URL (Phase 17.6 tightening).
 4. Persist new SentimentScore rows.
 
-Phase 17.6 dedup improvements:
-- The in-memory set now contains ``(headline, url)`` tuples instead of
-  headline-only strings.  This prevents two different articles with
-  identical titles (common with wire-service re-posts) from being treated
-  as duplicates, while still catching true duplicates from the same source.
-- A URL-only check prevents the same article URL from being stored twice
-  even if the title changed slightly between fetches.
+Phase 17.7 improvements:
+- Pipeline is timed end-to-end; ``duration_ms`` is logged and returned.
+- Every run is tagged with a ``correlation_id`` so logs from fetch → score →
+  store can be correlated across services.
+- Fetch status is logged at the appropriate level (WARNING for transient
+  issues like rate limits, ERROR for config issues like missing key).
 """
 
 from __future__ import annotations
 
+import time
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
@@ -32,6 +33,12 @@ from app.services.sentiment.scorer import score_text
 
 logger = get_logger(__name__)
 
+_TRANSIENT_STATUSES = frozenset({
+    FetchStatus.RATE_LIMITED,
+    FetchStatus.HTTP_ERROR,
+    FetchStatus.NETWORK_ERROR,
+})
+
 
 def run_sentiment_pipeline(
     db: Session,
@@ -39,13 +46,17 @@ def run_sentiment_pipeline(
     symbol_id: int,
     symbol: str,
     lookback_days: int = 7,
+    correlation_id: str | None = None,
 ) -> dict:
     """Run the full sentiment pipeline for one symbol.
 
     Returns:
-        Summary dict with counts *and* a ``fetch_status`` / ``fetch_detail``
-        pair so callers can surface the reason to end-users.
+        Summary dict with counts, timing, and a ``fetch_status`` /
+        ``fetch_detail`` pair so callers can surface the reason to end-users.
     """
+    cid = correlation_id or uuid.uuid4().hex[:12]
+    t0 = time.monotonic()
+
     now = datetime.now(timezone.utc)
     from_date = (now - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
     to_date = now.strftime("%Y-%m-%d")
@@ -55,12 +66,20 @@ def run_sentiment_pipeline(
     )
 
     if outcome.status != FetchStatus.OK:
-        logger.info(
+        duration_ms = round((time.monotonic() - t0) * 1000)
+        log_fn = (
+            logger.warning if outcome.status in _TRANSIENT_STATUSES
+            else logger.error if outcome.status in (FetchStatus.NO_API_KEY, FetchStatus.INVALID_API_KEY)
+            else logger.info
+        )
+        log_fn(
             "sentiment_pipeline_fetch_issue",
+            correlation_id=cid,
             symbol=symbol,
             symbol_id=symbol_id,
             fetch_status=outcome.status.value,
             fetch_detail=outcome.detail,
+            duration_ms=duration_ms,
         )
         return {
             "fetched": 0,
@@ -68,11 +87,12 @@ def run_sentiment_pipeline(
             "skipped": 0,
             "fetch_status": outcome.status.value,
             "fetch_detail": outcome.detail,
+            "duration_ms": duration_ms,
+            "correlation_id": cid,
         }
 
     articles = outcome.articles
 
-    # Phase 17.6 — dual-key dedup: headline *and* URL
     cutoff = now - timedelta(days=lookback_days)
     existing_rows = (
         db.query(SentimentScore.headline, SentimentScore.url)
@@ -117,13 +137,17 @@ def run_sentiment_pipeline(
 
     db.commit()
 
+    duration_ms = round((time.monotonic() - t0) * 1000)
+
     logger.info(
         "sentiment_pipeline_completed",
+        correlation_id=cid,
         symbol=symbol,
         symbol_id=symbol_id,
         fetched=len(articles),
         new=new_count,
         skipped=skipped,
+        duration_ms=duration_ms,
     )
 
     return {
@@ -132,4 +156,6 @@ def run_sentiment_pipeline(
         "skipped": skipped,
         "fetch_status": FetchStatus.OK.value,
         "fetch_detail": "",
+        "duration_ms": duration_ms,
+        "correlation_id": cid,
     }

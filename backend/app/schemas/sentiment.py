@@ -1,4 +1,4 @@
-"""Pydantic schemas for sentiment scores (Phase 17.1 + 17.2 + 17.5)."""
+"""Pydantic schemas for sentiment scores (Phase 17.1–17.7)."""
 
 from datetime import datetime
 
@@ -58,17 +58,29 @@ class SentimentRefreshResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Phase 17.5 — status endpoint
+# Phase 17.5 + 17.7 — status endpoint
 # ---------------------------------------------------------------------------
 
 class SentimentStatusItem(BaseModel):
-    """Per-symbol status summary returned by the status endpoint."""
+    """Per-symbol status summary returned by the status endpoint.
+
+    Phase 17.7 additions:
+    - ``last_refreshed_at``: the most recent ``created_at`` timestamp,
+      indicating when the pipeline last stored a row for this symbol.
+    - ``data_age_hours``: hours since the newest stored headline was published.
+      ``None`` when no data exists yet.
+    - ``is_stale``: True when the newest headline is older than the staleness
+      threshold (default 48 hours) or no data exists at all.
+    """
 
     symbol: str
     symbol_id: int
     total_scores: int
     newest_published_at: datetime | None = None
     oldest_published_at: datetime | None = None
+    last_refreshed_at: datetime | None = None
+    data_age_hours: float | None = None
+    is_stale: bool = False
 
 
 class SentimentStatusResponse(BaseModel):

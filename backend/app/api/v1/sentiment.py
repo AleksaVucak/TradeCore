@@ -1,15 +1,11 @@
-"""API endpoints for sentiment scores (Phase 17.2 + 17.5).
+"""API endpoints for sentiment scores (Phase 17.2–17.7).
 
 Exposes sentiment data stored by the Phase 17.1 pipeline so the frontend
 and other consumers can query recent sentiment for any tracked symbol.
 
-Phase 17.5 additions:
-- ``GET /status`` — returns per-symbol data counts and whether the API key
-  is configured, giving the frontend everything it needs to render
-  actionable empty-state guidance.
-- ``POST /refresh`` now also accepts an ``?async=false`` query param to run
-  the pipeline **synchronously** and return immediate diagnostics (count of
-  new articles, fetch_status, fetch_detail).
+Phase 17.7 additions:
+- ``GET /status`` now returns ``last_refreshed_at``, ``data_age_hours``,
+  and ``is_stale`` per symbol for monitoring and alerting.
 """
 
 from __future__ import annotations
@@ -39,9 +35,11 @@ logger = get_logger(__name__)
 
 router = APIRouter()
 
+STALENESS_THRESHOLD_HOURS = 48
+
 
 # ---------------------------------------------------------------------------
-# Phase 17.5 — status endpoint (placed BEFORE path-parameter routes)
+# GET /status — placed BEFORE path-parameter routes
 # ---------------------------------------------------------------------------
 
 @router.get(
@@ -53,11 +51,13 @@ def get_sentiment_status(
     _user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
-    """Return per-symbol sentiment summary + whether the API key is set.
+    """Return per-symbol sentiment summary including staleness indicators.
 
-    The frontend uses this to show actionable guidance when data is empty.
+    Phase 17.7: adds ``last_refreshed_at``, ``data_age_hours``, and
+    ``is_stale`` so dashboards and alerting can surface pipeline health.
     """
     key_set = bool(settings.newsapi_key)
+    now = datetime.now(timezone.utc)
 
     rows = (
         db.query(
@@ -66,6 +66,7 @@ def get_sentiment_status(
             func.count(SentimentScore.id).label("total"),
             func.max(SentimentScore.published_at).label("newest"),
             func.min(SentimentScore.published_at).label("oldest"),
+            func.max(SentimentScore.created_at).label("last_refreshed"),
         )
         .outerjoin(SentimentScore, SentimentScore.symbol_id == Symbol.id)
         .filter(Symbol.is_active.is_(True))
@@ -74,22 +75,41 @@ def get_sentiment_status(
         .all()
     )
 
-    items = [
-        SentimentStatusItem(
-            symbol=r.symbol,
-            symbol_id=r.id,
-            total_scores=r.total or 0,
-            newest_published_at=r.newest,
-            oldest_published_at=r.oldest,
+    items: list[SentimentStatusItem] = []
+    for r in rows:
+        newest = r.newest
+        data_age_hours: float | None = None
+        is_stale = True
+
+        if newest is not None:
+            if newest.tzinfo is None:
+                newest = newest.replace(tzinfo=timezone.utc)
+            age_seconds = (now - newest).total_seconds()
+            data_age_hours = round(age_seconds / 3600, 1)
+            is_stale = data_age_hours > STALENESS_THRESHOLD_HOURS
+
+        last_refreshed = r.last_refreshed
+        if last_refreshed is not None and last_refreshed.tzinfo is None:
+            last_refreshed = last_refreshed.replace(tzinfo=timezone.utc)
+
+        items.append(
+            SentimentStatusItem(
+                symbol=r.symbol,
+                symbol_id=r.id,
+                total_scores=r.total or 0,
+                newest_published_at=newest,
+                oldest_published_at=r.oldest,
+                last_refreshed_at=last_refreshed,
+                data_age_hours=data_age_hours,
+                is_stale=is_stale,
+            )
         )
-        for r in rows
-    ]
 
     return SentimentStatusResponse(newsapi_key_set=key_set, symbols=items)
 
 
 # ---------------------------------------------------------------------------
-# POST /refresh — unchanged route path; new optional sync mode
+# POST /refresh — unchanged route path; optional sync mode
 # ---------------------------------------------------------------------------
 
 @router.post(
@@ -152,7 +172,9 @@ def trigger_sentiment_refresh(
         "sentiment_refresh_sync_completed",
         symbol=sym.symbol,
         symbol_id=sym.id,
-        **pipeline_result,
+        duration_ms=pipeline_result.get("duration_ms"),
+        correlation_id=pipeline_result.get("correlation_id"),
+        **{k: v for k, v in pipeline_result.items() if k not in ("duration_ms", "correlation_id")},
     )
 
     return {
