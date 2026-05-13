@@ -113,8 +113,9 @@ curl -s -X POST "http://localhost:8000/api/v1/sentiment/refresh?async=false" \
 
 1. Open `http://localhost:3000`
 2. Log in and navigate to **Market Data**
-3. Select a symbol — the **Sentiment Panel** should show headlines with scores
-4. On a strategy page, toggle the **Sentiment Filter** editor
+3. Select a symbol — the **Sentiment Panel** lists **10 headlines per page** (newest first). Use **Previous** / **Next** to move through pages when there are more than 10 results.
+4. Open a **completed backtest run** — the same panel appears for the run’s date window, with the same pagination.
+5. On a strategy page, toggle the **Sentiment Filter** editor.
 
 ---
 
@@ -152,7 +153,7 @@ lookback window. Exits are never gated.
 | `total_scores: 0` in status | Pipeline never ran, or no articles found | Trigger a manual refresh (section 4c above) |
 | `is_stale: true` | Data is older than 48 hours | Trigger a refresh; check that `worker` and `beat` are running |
 | UI shows "No sentiment data yet" | No scores in DB for this symbol | Refresh data first (section 4c), then reload the page |
-| UI shows 20 headlines but API says 50 | UI default display limit is 20 | Click **Load more** in the Sentiment Panel |
+| UI shows 10 headlines per page but API aggregate total is higher | Pagination shows one page at a time | Use **Previous** / **Next** in the Sentiment Panel |
 | Backtest unchanged with filter on | No sentiment data in the backtest date range | Ensure sentiment scores exist overlapping the backtest period |
 | `LookupError: vader_lexicon` | NLTK data not downloaded in container | Rebuild: `docker compose build backend worker beat` |
 
@@ -166,7 +167,7 @@ All endpoints require `Authorization: Bearer <token>`.
 |---|---|---|
 | `GET` | `/api/v1/sentiment/status` | Pipeline health: per-symbol counts, staleness, API key status |
 | `POST` | `/api/v1/sentiment/refresh` | Trigger refresh (async by default; add `?async=false` for sync) |
-| `GET` | `/api/v1/sentiment/{symbol}` | List headline scores (supports `?limit=`, `?start=`, `?end=`, `?label=`) |
+| `GET` | `/api/v1/sentiment/{symbol}` | List headline scores (`?limit=`, `?offset=`, `?start=`, `?end=`, `?label=`) |
 | `GET` | `/api/v1/sentiment/{symbol}/aggregate` | Aggregated stats: avg score, label counts |
 
 ---

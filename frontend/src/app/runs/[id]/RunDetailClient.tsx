@@ -624,7 +624,6 @@ export function RunDetailClient({ runId }: { runId: string }) {
             symbol={symbolName}
             start={run.start_time}
             end={run.end_time}
-            limit={50}
             title="News sentiment during run"
             description={`Headlines scored between ${formatDateRange(run.start_time, run.end_time)} (${symbolName}).`}
           />

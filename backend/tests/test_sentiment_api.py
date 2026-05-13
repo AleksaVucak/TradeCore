@@ -124,6 +124,53 @@ class TestGetSentimentForSymbol:
         assert data["count"] == 3
         assert len(data["scores"]) == 3
 
+    def test_offset_pagination(
+        self, client: TestClient, db_session: Session, auth_headers: dict, test_user: User
+    ):
+        """Second page returns older rows (published_at desc) after offset."""
+        sym = _get_or_create_symbol(db_session, "BTCUSD", "BTC", "USD")
+        base = datetime(2026, 5, 10, 12, 0, 0, tzinfo=timezone.utc)
+        for i in range(7):
+            row = SentimentScore(
+                symbol_id=sym.id,
+                source="TestSource",
+                headline=f"Offset test headline {i}",
+                url=f"https://example.com/off-{i}",
+                published_at=base - timedelta(hours=i),
+                score=0.1 * i,
+                label="positive",
+            )
+            db_session.add(row)
+        db_session.flush()
+
+        r1 = client.get(
+            f"/api/v1/sentiment/{sym.symbol}?limit=3&offset=0",
+            headers=auth_headers,
+        )
+        assert r1.status_code == 200
+        d1 = r1.json()
+        assert d1["count"] == 3
+        titles1 = [s["headline"] for s in d1["scores"]]
+
+        r2 = client.get(
+            f"/api/v1/sentiment/{sym.symbol}?limit=3&offset=3",
+            headers=auth_headers,
+        )
+        assert r2.status_code == 200
+        d2 = r2.json()
+        assert d2["count"] == 3
+        titles2 = [s["headline"] for s in d2["scores"]]
+
+        assert set(titles1).isdisjoint(titles2)
+
+        r3 = client.get(
+            f"/api/v1/sentiment/{sym.symbol}?limit=3&offset=6",
+            headers=auth_headers,
+        )
+        assert r3.status_code == 200
+        d3 = r3.json()
+        assert d3["count"] == 1
+
     def test_label_filter(
         self, client: TestClient, db_session: Session, auth_headers: dict, test_user: User
     ):

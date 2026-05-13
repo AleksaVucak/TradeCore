@@ -197,6 +197,7 @@ def trigger_sentiment_refresh(
 def get_sentiment_for_symbol(
     symbol: str,
     limit: int = Query(50, ge=1, le=500, description="Max rows to return"),
+    offset: int = Query(0, ge=0, le=10_000, description="Skip this many rows (pagination, after sort)"),
     start: datetime | None = Query(None, description="Filter: published_at >= start (ISO-8601)"),
     end: datetime | None = Query(None, description="Filter: published_at <= end (ISO-8601)"),
     label: str | None = Query(None, description="Filter by label: positive, negative, neutral"),
@@ -236,6 +237,7 @@ def get_sentiment_for_symbol(
 
     scores = (
         query.order_by(SentimentScore.published_at.desc())
+        .offset(offset)
         .limit(limit)
         .all()
     )

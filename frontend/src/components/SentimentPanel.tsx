@@ -1,14 +1,11 @@
 "use client";
 
 /**
- * Phase 17.4 + 17.5 + 17.6 — reusable sentiment display component.
+ * Phase 17.4+ — reusable sentiment display component.
  *
- * Phase 17.6 improvements:
- * - "Showing X of Y" counter above the headlines table.
- * - Date-window-aware empty state: when start/end are provided (run page)
- *   and zero results come back, the message explains that the pipeline's
- *   lookback window may not cover the backtest date range instead of the
- *   generic "set your API key" instructions.
+ * Headlines use **page-based pagination**: `limit` rows per page (default 10),
+ * only the current page is fetched (`offset` on the API). Prev / Next rotate
+ * pages so at most `limit` rows are shown at once.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -71,14 +68,14 @@ export function SentimentPanel({
   symbolId = null,
   start = null,
   end = null,
-  limit = 20,
+  limit = 10,
   title = "News sentiment",
   description,
   showRefresh = false,
   showAggregate = true,
   showList = true,
 }: SentimentPanelProps) {
-  const [visibleLimit, setVisibleLimit] = useState(limit);
+  const [page, setPage] = useState(1);
   const [aggregate, setAggregate] = useState<SentimentAggregateOut | null>(null);
   const [scores, setScores] = useState<SentimentScoreOut[]>([]);
   const [loading, setLoading] = useState(true);
@@ -89,72 +86,77 @@ export function SentimentPanel({
   const isDateFiltered = Boolean(start || end);
 
   useEffect(() => {
-    setVisibleLimit(limit);
+    setPage(1);
   }, [limit, symbol, start, end]);
 
-  const load = useCallback(async () => {
-    if (!token || !symbol) {
+  const load = useCallback(
+    async (pageOverride?: number) => {
+      const currentPage = pageOverride ?? page;
+      if (!token || !symbol) {
+        setLoading(false);
+        return;
+      }
+
+      setLoading(true);
+      setError(null);
+
+      const requests: Promise<unknown>[] = [];
+      if (showAggregate) {
+        requests.push(
+          sentimentApi.getAggregate(token, symbol, {
+            start: start ?? undefined,
+            end: end ?? undefined,
+          }),
+        );
+      } else {
+        requests.push(Promise.resolve(null));
+      }
+      if (showList) {
+        requests.push(
+          sentimentApi.getForSymbol(token, symbol, {
+            limit,
+            offset: (currentPage - 1) * limit,
+            start: start ?? undefined,
+            end: end ?? undefined,
+          }),
+        );
+      } else {
+        requests.push(Promise.resolve(null));
+      }
+
+      const [aggResult, listResult] = await Promise.allSettled(requests);
+
+      if (aggResult.status === "fulfilled") {
+        setAggregate((aggResult.value as SentimentAggregateOut | null) ?? null);
+      } else if (showAggregate) {
+        setAggregate(null);
+      }
+
+      if (listResult.status === "fulfilled") {
+        const data = listResult.value as { scores: SentimentScoreOut[] } | null;
+        setScores(data?.scores ?? []);
+      } else if (showList) {
+        setScores([]);
+      }
+
+      const aggFailed = showAggregate && aggResult.status === "rejected";
+      const listFailed = showList && listResult.status === "rejected";
+      if (aggFailed && listFailed) {
+        const reason =
+          (aggResult as PromiseRejectedResult).reason ??
+          (listResult as PromiseRejectedResult).reason;
+        setError(
+          reason instanceof Error ? reason.message : "Failed to load sentiment.",
+        );
+      }
+
       setLoading(false);
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-
-    const requests: Promise<unknown>[] = [];
-    if (showAggregate) {
-      requests.push(
-        sentimentApi.getAggregate(token, symbol, {
-          start: start ?? undefined,
-          end: end ?? undefined,
-        }),
-      );
-    } else {
-      requests.push(Promise.resolve(null));
-    }
-    if (showList) {
-      requests.push(
-        sentimentApi.getForSymbol(token, symbol, {
-          limit: visibleLimit,
-          start: start ?? undefined,
-          end: end ?? undefined,
-        }),
-      );
-    } else {
-      requests.push(Promise.resolve(null));
-    }
-
-    const [aggResult, listResult] = await Promise.allSettled(requests);
-
-    if (aggResult.status === "fulfilled") {
-      setAggregate((aggResult.value as SentimentAggregateOut | null) ?? null);
-    } else if (showAggregate) {
-      setAggregate(null);
-    }
-
-    if (listResult.status === "fulfilled") {
-      const data = listResult.value as { scores: SentimentScoreOut[] } | null;
-      setScores(data?.scores ?? []);
-    } else if (showList) {
-      setScores([]);
-    }
-
-    const aggFailed = showAggregate && aggResult.status === "rejected";
-    const listFailed = showList && listResult.status === "rejected";
-    if (aggFailed && listFailed) {
-      const reason =
-        (aggResult as PromiseRejectedResult).reason ??
-        (listResult as PromiseRejectedResult).reason;
-      setError(
-        reason instanceof Error ? reason.message : "Failed to load sentiment.",
-      );
-    }
-
-    setLoading(false);
-  }, [token, symbol, start, end, visibleLimit, showAggregate, showList]);
+    },
+    [token, symbol, start, end, page, limit, showAggregate, showList],
+  );
 
   useEffect(() => {
-    load();
+    void load();
   }, [load]);
 
   const handleRefresh = useCallback(async () => {
@@ -179,7 +181,8 @@ export function SentimentPanel({
           setRefreshNotice(
             `Refresh complete — ${newCount} new headline${newCount === 1 ? "" : "s"} scored and stored.`,
           );
-          load();
+          setPage(1);
+          await load(1);
         } else {
           setRefreshNotice(
             "Refresh complete — no new headlines found. All recent articles were already stored.",
@@ -204,12 +207,16 @@ export function SentimentPanel({
     : LABEL_COLOR.neutral;
 
   const totalAvailable = aggregate?.total ?? 0;
-  const canLoadMore =
-    !loading &&
-    !error &&
-    showList &&
-    scores.length > 0 &&
-    (aggregate ? scores.length < totalAvailable : scores.length >= visibleLimit);
+  const totalPages =
+    showAggregate && aggregate && totalAvailable > 0
+      ? Math.max(1, Math.ceil(totalAvailable / limit))
+      : null;
+  const rangeStart =
+    scores.length === 0 ? 0 : (page - 1) * limit + 1;
+  const rangeEnd = scores.length === 0 ? 0 : (page - 1) * limit + scores.length;
+  const hasPrev = page > 1;
+  const hasNext =
+    totalPages != null ? page < totalPages : scores.length === limit;
 
   return (
     <Card>
@@ -361,24 +368,40 @@ export function SentimentPanel({
               </div>
             ) : (
               <div className="space-y-3">
-                {/* Phase 17.6 — "Showing X of Y" counter */}
-                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
                   <span>
-                    Showing{" "}
-                    <span className="font-medium tabular-nums text-foreground">
-                      {scores.length}
-                    </span>
-                    {totalAvailable > 0 && (
+                    {scores.length > 0 ? (
                       <>
-                        {" "}
-                        of{" "}
+                        Showing{" "}
                         <span className="font-medium tabular-nums text-foreground">
-                          {totalAvailable}
+                          {rangeStart}
                         </span>
+                        –
+                        <span className="font-medium tabular-nums text-foreground">
+                          {rangeEnd}
+                        </span>
+                        {totalAvailable > 0 && (
+                          <>
+                            {" "}
+                            of{" "}
+                            <span className="font-medium tabular-nums text-foreground">
+                              {totalAvailable}
+                            </span>
+                          </>
+                        )}{" "}
+                        headline{scores.length === 1 ? "" : "s"}
                       </>
-                    )}{" "}
-                    headline{scores.length === 1 ? "" : "s"}
+                    ) : (
+                      <span>No headlines on this page.</span>
+                    )}
                   </span>
+                  {totalPages != null && totalPages > 1 && (
+                    <span className="tabular-nums">
+                      Page{" "}
+                      <span className="font-medium text-foreground">{page}</span> of{" "}
+                      <span className="font-medium text-foreground">{totalPages}</span>
+                    </span>
+                  )}
                 </div>
                 <div className="overflow-hidden rounded-lg border">
                   <table className="w-full text-sm">
@@ -448,16 +471,28 @@ export function SentimentPanel({
                     </tbody>
                   </table>
                 </div>
-                {canLoadMore && (
-                  <div className="flex items-center justify-center">
+                {(hasPrev || hasNext) && (
+                  <div className="flex flex-wrap items-center justify-center gap-3">
                     <Button
                       type="button"
                       variant="outline"
                       size="sm"
-                      onClick={() => setVisibleLimit((prev) => prev + limit)}
-                      disabled={loading}
+                      disabled={loading || !hasPrev}
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
                     >
-                      Load more
+                      Previous
+                    </Button>
+                    {totalPages == null && hasNext && (
+                      <span className="text-xs text-muted-foreground">Page {page}</span>
+                    )}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={loading || !hasNext}
+                      onClick={() => setPage((p) => p + 1)}
+                    >
+                      Next
                     </Button>
                   </div>
                 )}

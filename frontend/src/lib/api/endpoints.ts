@@ -601,10 +601,17 @@ export const sentimentApi = {
   getForSymbol: (
     token: string,
     symbol: string,
-    params?: { limit?: number; start?: string; end?: string; label?: string }
+    params?: {
+      limit?: number;
+      offset?: number;
+      start?: string;
+      end?: string;
+      label?: string;
+    }
   ) => {
     const search = new URLSearchParams();
     if (params?.limit != null) search.set("limit", String(params.limit));
+    if (params?.offset != null) search.set("offset", String(params.offset));
     if (params?.start) search.set("start", params.start);
     if (params?.end) search.set("end", params.end);
     if (params?.label) search.set("label", params.label);
